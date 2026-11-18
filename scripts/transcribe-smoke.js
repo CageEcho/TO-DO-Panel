@@ -11,6 +11,7 @@ const {
   selectTranscriber,
   buildInvocation,
   finalizeTranscriptionOutput,
+  uvSyncArgs,
 } = require('./transcribe-adapter');
 
 const root = path.join(__dirname, '..');
@@ -71,7 +72,7 @@ function main() {
     return;
   }
   const childEnv = { ...process.env, ...sample.env, TODO_PANEL_WHISPER_MODEL: model };
-  const synced = spawnSync(selection.command, ['sync', '--frozen', '--project', path.join(helperRoot, 'transcribe')], {
+  const synced = spawnSync(selection.command, uvSyncArgs(helperRoot), {
     stdio: 'inherit',
     env: childEnv,
     timeout: 600000,

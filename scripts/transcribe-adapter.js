@@ -105,7 +105,7 @@ function buildInvocation(selection, input, output, options = {}) {
     return {
       command: selection.command,
       args: [
-        'run', '--frozen', '--project', project,
+        'run', '--frozen', '--python', '3.12', '--project', project,
         'python', path.join(project, 'transcribe.py'),
         input, output,
         '--model', model,
@@ -128,6 +128,10 @@ function buildInvocation(selection, input, output, options = {}) {
   };
 }
 
+function uvSyncArgs(helperRoot) {
+  return ['sync', '--frozen', '--python', '3.12', '--project', path.join(helperRoot, 'transcribe')];
+}
+
 function isTwoPositionalContract(invocation) {
   return Boolean(invocation && invocation.kind === 'two-arg' && invocation.args.length === 2);
 }
@@ -144,6 +148,7 @@ module.exports = {
   selectTranscriber,
   privateRuntimeRoot,
   buildInvocation,
+  uvSyncArgs,
   kindForCommand,
   isTwoPositionalContract,
   finalizeTranscriptionOutput,

@@ -55,10 +55,10 @@ test('uv faster-whisper is selected when whisper is absent and uses the two-path
   assert.equal(selected.reason, 'faster_whisper_uv');
   const plan = buildInvocation(selected, '/tmp/clip.m4a', '/tmp/out/clip.txt');
   assert.equal(plan.command, '/usr/bin/uv');
-  assert.deepEqual(plan.args.slice(0, 6), [
-    'run', '--frozen', '--project', path.join(helper, 'transcribe'), 'python', path.join(helper, 'transcribe', 'transcribe.py'),
+  assert.deepEqual(plan.args.slice(0, 8), [
+    'run', '--frozen', '--python', '3.12', '--project', path.join(helper, 'transcribe'), 'python', path.join(helper, 'transcribe', 'transcribe.py'),
   ]);
-  assert.deepEqual(plan.args.slice(6), [
+  assert.deepEqual(plan.args.slice(8), [
     '/tmp/clip.m4a', '/tmp/out/clip.txt', '--model', 'small', '--device', 'cpu', '--compute-type', 'int8',
   ]);
   assert.equal(plan.env.HF_HUB_DISABLE_TELEMETRY, '1');

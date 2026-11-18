@@ -26,7 +26,7 @@ cp -R /Applications/TO-DO\ Panel\ Work.app/Contents/Resources/work-helper "$PRIV
 
 ## 第一次准备
 
-faster-whisper 1.2.1 会调用 `av.open(metadata_errors="ignore")`。PyAV 19 已删除这个参数，所以这里锁定 `av==18.1.0`，并固定 `ctranslate2==4.9.0`、`onnxruntime==1.32.0`、`tokenizers==0.23.3`。需要 Python 3.11 或更新；当前验收环境是 uv 的 CPython 3.12.14。
+faster-whisper 1.2.1 会调用 `av.open(metadata_errors="ignore")`。PyAV 19 已删除这个参数，所以这里锁定 `av==18.1.0`，并固定 `ctranslate2==4.9.0`、`onnxruntime==1.32.0`、`tokenizers==0.23.3`。需要 uv 管理的 CPython 3.12。验收环境是 3.12.14。onnxruntime 1.32.0 没有 Python 3.15 的轮子，所以同步命令写明 `--python 3.12`，不会跟着系统里更新的 Python 走。
 
 ```bash
 export UV_PROJECT_ENVIRONMENT="$PRIVATE/venv"
@@ -34,7 +34,7 @@ export UV_CACHE_DIR="$PRIVATE/uv-cache"
 export HF_HOME="${HF_HOME:-$PRIVATE/model-cache}"
 export HUGGINGFACE_HUB_CACHE="$HF_HOME/hub"
 export PYTHONDONTWRITEBYTECODE=1
-uv sync --frozen --project "$PRIVATE/helper/transcribe"
+uv sync --frozen --python 3.12 --project "$PRIVATE/helper/transcribe"
 ```
 
 `uv sync --frozen` 会按 `uv.lock` 新建或更新私有 venv。已经下载的 small 模型大约 486 MB，如果它在 `~/.cache/huggingface`，升级前执行 `export HF_HOME="$HOME/.cache/huggingface"`，就不会重新下载。只重建 venv 是安全的：av 从 19.0.2 换成 18.1.0，模型缓存保持不动。
@@ -53,7 +53,7 @@ uv sync --frozen --project "$PRIVATE/helper/transcribe"
 合计约 487 MB。`compute_type=int8` 只在内存里量化，不会把下载体积变成更小的文件。Apple Silicon 上使用 CPU，不使用 CUDA，也不把音频送到云端。
 
 ```bash
-uv run --frozen --project "$PRIVATE/helper/transcribe" \
+uv run --frozen --python 3.12 --project "$PRIVATE/helper/transcribe" \
   python "$PRIVATE/helper/transcribe/transcribe.py" \
   "<一个本地音频>" "<输出.txt>" --model small --device cpu --compute-type int8
 ```

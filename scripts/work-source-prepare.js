@@ -13,6 +13,7 @@ const {
   selectTranscriber,
   buildInvocation,
   finalizeTranscriptionOutput,
+  uvSyncArgs,
 } = require('./transcribe-adapter');
 
 function readArgs(argv) {
@@ -86,7 +87,7 @@ function main() {
       ...process.env,
       ...(buildInvocation(selection, 'sample.wav', 'sample.txt', invocationOptions).env || {}),
     };
-    const synced = spawnSync(selection.command, ['sync', '--frozen', '--project', path.join(helperRoot, 'transcribe')], {
+    const synced = spawnSync(selection.command, uvSyncArgs(helperRoot), {
       stdio: 'inherit',
       timeout: 600000,
       env: runtimeEnv,
