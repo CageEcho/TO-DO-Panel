@@ -18,9 +18,11 @@
     <array>
       <string>/usr/bin/env</string>
       <string>node</string>
-      <string>CHANGE_ME/scripts/grok-work-schedule.js</string>
-      <string>--config</string>
-      <string>CHANGE_ME/work-schedule.json</string>
+      <string>CHANGE_ME/scripts/work-source-prepare.js</string>
+      <string>--root</string>
+      <string>CHANGE_ME_WORK_ROOT</string>
+      <string>--out</string>
+      <string>CHANGE_ME/work-materials</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

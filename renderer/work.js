@@ -223,11 +223,17 @@
     const scheduleEnabled = document.getElementById('work-schedule-enabled');
     if (enabled) enabled.checked = state.sources.enabled === true;
     if (path) path.textContent = state.sources.folders[0] || '未选择';
-    if (time && document.activeElement !== time) time.value = state.schedule.time || '';
+    const lead = document.getElementById('work-schedule-lead');
+    const accepted = document.getElementById('work-schedule-accepted');
+    const prepare = document.getElementById('work-schedule-prepare');
+    if (time && document.activeElement !== time) time.value = state.schedule.readyBy || '09:00';
+    if (lead && document.activeElement !== lead) lead.value = String(state.schedule.leadMinutes ?? 60);
+    if (prepare) prepare.textContent = `提前 ${state.schedule.leadMinutes ?? 60} 分钟，${state.schedule.prepareAt || '08:00'} 开始`;
     if (weekdays) weekdays.checked = state.schedule.weekdaysOnly !== false;
+    if (accepted) accepted.checked = state.schedule.acceptedLocally === true;
     if (scheduleEnabled) {
       scheduleEnabled.checked = state.schedule.enabled === true;
-      scheduleEnabled.disabled = !state.schedule.time;
+      scheduleEnabled.disabled = state.schedule.acceptedLocally !== true;
     }
   }
 
@@ -257,7 +263,9 @@
       if (count) count.textContent = '无法读取该文件夹';
       return;
     }
-    if (count) count.textContent = `${listed.files.length} 个文本转写`;
+    const texts = listed.files.filter((file) => file.kind === 'text').length;
+    const audio = listed.files.filter((file) => file.kind === 'audio').length;
+    if (count) count.textContent = `${texts} 个文本，${audio} 个录音`;
   }
 
   function refreshCatchup() {
@@ -338,19 +346,28 @@
     });
     document.getElementById('work-source-refresh')?.addEventListener('click', () => refreshTranscripts());
     document.getElementById('work-schedule-time')?.addEventListener('change', (event) => {
-      state.schedule.time = event.currentTarget.value || null;
-      if (!state.schedule.time) state.schedule.enabled = false;
+      state.schedule.readyBy = event.currentTarget.value || '09:00';
       rememberSchedule(state);
-      if (!state.schedule.time) setNote('还没有确定上班时间，每日检查保持关闭。');
+    });
+    document.getElementById('work-schedule-lead')?.addEventListener('change', (event) => {
+      const leadMinutes = Number(event.currentTarget.value);
+      state.schedule.leadMinutes = Number.isInteger(leadMinutes) ? leadMinutes : 60;
+      rememberSchedule(state);
     });
     document.getElementById('work-schedule-weekdays')?.addEventListener('change', (event) => {
       state.schedule.weekdaysOnly = event.currentTarget.checked === true;
       rememberSchedule(state);
     });
+    document.getElementById('work-schedule-accepted')?.addEventListener('change', (event) => {
+      state.schedule.acceptedLocally = event.currentTarget.checked === true;
+      if (!state.schedule.acceptedLocally) state.schedule.enabled = false;
+      rememberSchedule(state);
+      if (!state.schedule.acceptedLocally) setNote('还没有完成本机端到端验收，每日检查保持关闭。');
+    });
     document.getElementById('work-schedule-enabled')?.addEventListener('change', (event) => {
-      if (!state.schedule.time) {
+      if (state.schedule.acceptedLocally !== true) {
         event.currentTarget.checked = false;
-        setNote('先填写上班时间。时间未确定时不会自动启用。');
+        setNote('先在这台电脑完成一次端到端验收，再打开每日检查。');
         return;
       }
       state.schedule.enabled = event.currentTarget.checked === true;

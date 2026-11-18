@@ -735,12 +735,47 @@ function backupWorkStateFile(backupDir, jsonText, now = new Date(), { appData } 
   return { ok: true, fileName };
 }
 
-const TRANSCRIPT_EXTENSIONS = new Set(['.txt', '.md', '.json', '.vtt', '.srt']);
-const BLOCKED_MEDIA_EXTENSIONS = new Set([
+const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.json', '.vtt', '.srt']);
+const AUDIO_EXTENSIONS = new Set([
   '.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.mp4', '.mov', '.mkv', '.webm', '.caf', '.aiff', '.aif',
 ]);
+const EXECUTABLE_EXTENSIONS = new Set([
+  '.exe', '.dll', '.so', '.dylib', '.app', '.command', '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', '.dmg', '.pkg', '.msi', '.apk',
+]);
+const CREDENTIAL_NAME = /(^|\/)(credentials|secrets|tokens?|id_rsa|id_ed25519)(\.|$)|(\.(pem|key|p12|pfx|kdbx)$)/i;
 
-function listTranscriptFolder(folder, { appData, home, maxFiles = 200, maxBytes = 2 * 1024 * 1024 } = {}) {
+function pathInside(root, candidate) {
+  const base = path.resolve(root);
+  const target = path.resolve(candidate);
+  return target === base || target.startsWith(base + path.sep);
+}
+
+function sensitiveReason(relativePath, mode = 0) {
+  const normalized = String(relativePath || '').replace(/\\/g, '/');
+  const base = path.posix.basename(normalized);
+  if (!base || base.startsWith('.')) return 'hidden_or_unsafe';
+  if (CREDENTIAL_NAME.test(normalized)) return 'credential';
+  const extension = path.posix.extname(base).toLowerCase();
+  if (EXECUTABLE_EXTENSIONS.has(extension)) return 'executable';
+  if ((mode & 0o111) !== 0 && !TEXT_EXTENSIONS.has(extension) && !AUDIO_EXTENSIONS.has(extension)) return 'executable';
+  return '';
+}
+
+function hashFileContents(filePath) {
+  const hash = crypto.createHash('sha256');
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest('hex');
+}
+
+function inspectWorkRoot(folder, {
+  appData,
+  home,
+  maxFiles = 500,
+  maxDepth = 8,
+  maxBytes = 2 * 1024 * 1024,
+  maxAudioBytes = 32 * 1024 * 1024,
+  knownAudioHashes = [],
+} = {}) {
   let root;
   try {
     root = path.resolve(String(folder || ''));
@@ -750,81 +785,294 @@ function listTranscriptFolder(folder, { appData, home, maxFiles = 200, maxBytes 
   if (!path.isAbsolute(root)) return { ok: false, error: 'not_absolute' };
   if (isBroadTranscriptFolder(root, { home, appData })) return { ok: false, error: 'folder_too_broad' };
   if (appData && isOfficialPanelDataPath(root, appData)) return { ok: false, error: 'official_data_dir' };
-  let stat;
+  let rootStat;
   try {
-    stat = fs.lstatSync(root);
+    rootStat = fs.lstatSync(root);
   } catch (error) {
     return { ok: false, error: 'unavailable' };
   }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) return { ok: false, error: 'not_directory' };
+  if (!rootStat.isDirectory() && !rootStat.isSymbolicLink()) return { ok: false, error: 'not_directory' };
   let realRoot;
   try {
     realRoot = fs.realpathSync(root);
   } catch (error) {
     return { ok: false, error: 'unavailable' };
   }
-  let entries;
+  if (isBroadTranscriptFolder(realRoot, { home, appData })) return { ok: false, error: 'folder_too_broad' };
+  let realRootStat;
   try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
+    realRootStat = fs.statSync(realRoot);
   } catch (error) {
-    return { ok: false, error: 'unreadable' };
+    return { ok: false, error: 'not_directory' };
   }
+  if (!realRootStat.isDirectory()) return { ok: false, error: 'not_directory' };
+
   const files = [];
   const skipped = [];
-  entries.forEach((entry) => {
-    const name = entry.name;
+  const known = new Set((Array.isArray(knownAudioHashes) ? knownAudioHashes : []).filter((value) => /^[a-f0-9]{64}$/.test(value)));
+  const seenAudio = new Set(known);
+
+  function skip(relativePath, reason) {
+    if (skipped.length < 200) skipped.push({ name: String(relativePath || '').slice(0, 180), reason });
+  }
+
+  function addFile(relativePath, full, realFile, stat, viaSymlink) {
     if (files.length >= maxFiles) {
-      skipped.push({ name: String(name).slice(0, 80), reason: 'limit' });
+      skip(relativePath, 'limit');
       return;
     }
-    if (!name || name.startsWith('.') || name !== path.basename(name)) {
-      skipped.push({ name: String(name || '').slice(0, 80), reason: 'hidden_or_unsafe' });
+    const sensitivity = sensitiveReason(relativePath, stat.mode);
+    if (sensitivity) {
+      skip(relativePath, sensitivity);
       return;
     }
-    const extension = path.extname(name).toLowerCase();
-    if (BLOCKED_MEDIA_EXTENSIONS.has(extension)) {
-      skipped.push({ name, reason: 'media_not_read' });
+    if (!pathInside(realRoot, realFile)) {
+      skip(relativePath, 'escape');
       return;
     }
-    if (!TRANSCRIPT_EXTENSIONS.has(extension)) {
-      skipped.push({ name, reason: 'extension' });
+    const extension = path.posix.extname(relativePath).toLowerCase();
+    const kind = AUDIO_EXTENSIONS.has(extension) ? 'audio' : TEXT_EXTENSIONS.has(extension) ? 'text' : '';
+    if (!kind) {
+      skip(relativePath, 'extension');
       return;
     }
-    const full = path.resolve(root, name);
-    if (!full.startsWith(realRoot + path.sep) && !full.startsWith(root + path.sep)) {
-      skipped.push({ name, reason: 'escape' });
+    const limit = kind === 'audio' ? maxAudioBytes : maxBytes;
+    if (stat.size > limit) {
+      skip(relativePath, 'too_large');
       return;
     }
-    let fileStat;
+    let sha256;
     try {
-      fileStat = fs.lstatSync(full);
+      sha256 = hashFileContents(realFile);
     } catch (error) {
-      skipped.push({ name, reason: 'unreadable' });
+      skip(relativePath, 'unreadable');
       return;
     }
-    if (fileStat.isSymbolicLink() || !fileStat.isFile()) {
-      skipped.push({ name, reason: 'not_regular_file' });
+    const duplicate = kind === 'audio' && seenAudio.has(sha256);
+    if (kind === 'audio') seenAudio.add(sha256);
+    files.push({
+      name: path.posix.basename(relativePath),
+      relativePath,
+      kind,
+      bytes: stat.size,
+      modifiedAt: new Date(stat.mtimeMs).toISOString(),
+      sha256,
+      viaSymlink: viaSymlink === true,
+      duplicate,
+      transcription: kind === 'audio'
+        ? { state: duplicate ? 'duplicate' : 'needs_local_transcriber', reason: duplicate ? 'audio_watermark' : 'not_transcribed' }
+        : null,
+    });
+  }
+
+  function walk(directory, relativeDir, depth) {
+    if (depth > maxDepth) {
+      skip(relativeDir || '.', 'max_depth');
       return;
     }
-    let realFile;
+    let entries;
     try {
-      realFile = fs.realpathSync(full);
+      entries = fs.readdirSync(directory, { withFileTypes: true });
     } catch (error) {
-      skipped.push({ name, reason: 'unreadable' });
+      skip(relativeDir || '.', 'unreadable');
       return;
     }
-    if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
-      skipped.push({ name, reason: 'escape' });
-      return;
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    entries.forEach((entry) => {
+      const name = entry.name;
+      const relativePath = relativeDir ? `${relativeDir}/${name}` : name;
+      if (!name || name !== path.basename(name) || name.startsWith('.')) {
+        skip(relativePath, 'hidden_or_unsafe');
+        return;
+      }
+      const full = path.resolve(directory, name);
+      let listed;
+      try {
+        listed = fs.lstatSync(full);
+      } catch (error) {
+        skip(relativePath, 'unreadable');
+        return;
+      }
+      if (listed.isSymbolicLink()) {
+        let realFile;
+        try {
+          realFile = fs.realpathSync(full);
+        } catch (error) {
+          skip(relativePath, 'escape');
+          return;
+        }
+        if (!pathInside(realRoot, realFile)) {
+          skip(relativePath, 'escape');
+          return;
+        }
+        let realStat;
+        try {
+          realStat = fs.statSync(realFile);
+        } catch (error) {
+          skip(relativePath, 'unreadable');
+          return;
+        }
+        if (realStat.isDirectory()) {
+          skip(relativePath, 'symlink_directory');
+          return;
+        }
+        addFile(relativePath, full, realFile, realStat, true);
+        return;
+      }
+      if (listed.isDirectory()) {
+        const sensitivity = sensitiveReason(relativePath, 0);
+        if (sensitivity) {
+          skip(relativePath, sensitivity);
+          return;
+        }
+        walk(full, relativePath, depth + 1);
+        return;
+      }
+      if (!listed.isFile()) {
+        skip(relativePath, 'not_regular_file');
+        return;
+      }
+      let realFile;
+      try {
+        realFile = fs.realpathSync(full);
+      } catch (error) {
+        skip(relativePath, 'unreadable');
+        return;
+      }
+      addFile(relativePath, full, realFile, listed, false);
+    });
+  }
+
+  walk(realRoot, '', 1);
+  files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return {
+    ok: true,
+    files,
+    skipped,
+    audioHashes: files.filter((file) => file.kind === 'audio').map((file) => file.sha256),
+  };
+}
+
+function listTranscriptFolder(folder, options) {
+  return inspectWorkRoot(folder, options);
+}
+
+function probeLocalTranscriber({ env = {}, lookup } = {}) {
+  const requested = typeof env.TODO_PANEL_LOCAL_TRANSCRIBE === 'string' ? env.TODO_PANEL_LOCAL_TRANSCRIBE.trim() : '';
+  if (requested && /(api\.openai|api\.anthropic|dashscope|bailian|aliyuncs|generativelanguage\.googleapis)/i.test(requested)) {
+    return { ok: false, reason: 'refusing_cloud_transcriber' };
+  }
+  if (typeof lookup === 'function') {
+    const found = lookup(requested ? [requested] : ['whisper-cli', 'whisper']);
+    if (!found) return { ok: false, reason: 'local_transcriber_missing' };
+    return { ok: true, reason: 'local_transcriber_ready', command: path.basename(String(found)) };
+  }
+  return { ok: false, reason: 'local_transcriber_missing' };
+}
+
+function safeMaterialName(relativePath) {
+  const cleaned = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!cleaned || cleaned.split('/').some((part) => !part || part === '.' || part === '..')) return '';
+  return `${cleaned.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 160)}.txt`;
+}
+
+function prepareWorkMaterials({
+  root,
+  outDir,
+  knownAudioHashes,
+  runner,
+  env,
+  lookup,
+  home,
+  appData,
+  maxBytes,
+  maxAudioBytes,
+} = {}) {
+  let output;
+  try {
+    output = path.resolve(String(outDir || ''));
+  } catch (error) {
+    return { ok: false, error: 'out_dir' };
+  }
+  if (path.basename(output) !== 'work-materials') return { ok: false, error: 'out_dir' };
+  const inspected = inspectWorkRoot(root, { knownAudioHashes, home, appData, maxBytes, maxAudioBytes });
+  if (!inspected.ok) return inspected;
+  let sourceRoot;
+  try {
+    sourceRoot = fs.realpathSync(path.resolve(root));
+  } catch (error) {
+    return { ok: false, error: 'unavailable' };
+  }
+  if (pathInside(sourceRoot, output) || pathInside(output, sourceRoot)) return { ok: false, error: 'out_overlaps_root' };
+  const transcriber = typeof runner === 'function'
+    ? { ok: true, reason: 'test_runner', command: 'test-runner' }
+    : probeLocalTranscriber({ env, lookup });
+  try {
+    fs.mkdirSync(path.join(output, 'text'), { recursive: true, mode: 0o700 });
+  } catch (error) {
+    return { ok: false, error: 'out_dir' };
+  }
+  const files = [];
+  inspected.files.forEach((file) => {
+    const record = {
+      relativePath: file.relativePath,
+      kind: file.kind,
+      sha256: file.sha256,
+      bytes: file.bytes,
+      duplicate: file.duplicate === true,
+    };
+    const materialName = safeMaterialName(file.relativePath);
+    const materialPath = materialName ? path.join(output, 'text', materialName) : '';
+    if (file.kind === 'text' && !file.duplicate && materialPath) {
+      const source = path.join(sourceRoot, ...file.relativePath.split('/'));
+      if (!pathInside(sourceRoot, source)) {
+        record.transcription = { state: 'unavailable', reason: 'escape' };
+      } else {
+        fs.writeFileSync(materialPath, fs.readFileSync(source));
+        record.textFile = `text/${materialName}`;
+      }
     }
-    if (fileStat.size > maxBytes) {
-      skipped.push({ name, reason: 'too_large' });
-      return;
+    if (file.kind === 'audio') {
+      if (file.duplicate) {
+        record.transcription = { state: 'duplicate', reason: 'audio_watermark' };
+      } else if (!transcriber.ok || typeof runner !== 'function') {
+        record.transcription = { state: 'unavailable', reason: transcriber.ok ? 'local_transcriber_not_run' : transcriber.reason };
+      } else {
+        const source = path.join(sourceRoot, ...file.relativePath.split('/'));
+        const result = pathInside(sourceRoot, source)
+          ? runner({ input: source, output: materialPath, relativePath: file.relativePath })
+          : { ok: false, reason: 'escape' };
+        if (result && result.ok === true && materialPath && fs.existsSync(materialPath)) {
+          record.textFile = `text/${materialName}`;
+          record.transcription = { state: 'ready', reason: 'local_transcript' };
+        } else {
+          record.transcription = { state: 'unavailable', reason: (result && result.reason) || 'transcriber_failed' };
+        }
+      }
     }
-    files.push({ name, bytes: fileStat.size, modifiedAt: new Date(fileStat.mtimeMs).toISOString() });
+    files.push(record);
   });
-  files.sort((a, b) => a.name.localeCompare(b.name));
-  return { ok: true, folder: root, files, skipped: skipped.slice(0, 80) };
+  const manifest = {
+    version: 1,
+    rootLabel: 'private-local-root',
+    timezone: 'Asia/Shanghai',
+    readyBy: '09:00',
+    leadMinutes: 60,
+    prepareAt: '08:00',
+    scheduleEnabled: false,
+    acceptedLocally: false,
+    transcriber: { ok: Boolean(transcriber.ok), reason: transcriber.reason },
+    files,
+    skipped: inspected.skipped,
+  };
+  const manifestText = JSON.stringify(manifest, null, 2);
+  if (manifestText.includes(sourceRoot)) return { ok: false, error: 'manifest_leaked_root' };
+  if (!writeAtomicFile(path.join(output, 'manifest.json'), manifestText)) return { ok: false, error: 'write' };
+  writeAtomicFile(path.join(output, 'audio-watermark.json'), JSON.stringify({
+    version: 1,
+    hashes: [...new Set(inspected.audioHashes)],
+  }, null, 2));
+  return { ok: true, manifest };
 }
 
 module.exports = {
@@ -866,4 +1114,7 @@ module.exports = {
   writeAtomicFile,
   backupWorkStateFile,
   listTranscriptFolder,
+  inspectWorkRoot,
+  probeLocalTranscriber,
+  prepareWorkMaterials,
 };

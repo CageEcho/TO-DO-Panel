@@ -212,41 +212,36 @@ test('unknown deadline stays empty and zoned deadlines are kept', () => {
   assert.equal(imported.state.tasks[0].deadline, null);
 });
 
-test('Asia/Shanghai schedule stays off until a weekday time is configured', () => {
-  const mondayMorning = Date.parse('2026-11-16T00:29:00Z'); // 08:29 Shanghai, Monday
-  const mondayDue = Date.parse('2026-11-16T00:30:00Z'); // 08:30 Shanghai
-  const sundayNight = Date.parse('2026-11-15T16:00:00Z'); // Monday 00:00 Shanghai
+test('weekday preparation starts before 09:00 and stays off until local acceptance', () => {
+  const beforePrepare = Date.parse('2026-11-15T23:59:00Z'); // Monday 07:59 Shanghai
+  const prepareAt = Date.parse('2026-11-16T00:00:00Z'); // Monday 08:00 Shanghai
   const stillSunday = Date.parse('2026-11-15T15:59:00Z'); // Sunday 23:59 Shanghai
-  assert.equal(shanghaiParts(stillSunday).dateKey, '2026-11-15');
   assert.equal(shanghaiParts(stillSunday).weekday, 'Sun');
-  assert.equal(shanghaiParts(sundayNight).dateKey, '2026-11-16');
-  assert.equal(shanghaiParts(sundayNight).weekday, 'Mon');
-  const unset = evaluateWorkSchedule({ enabled: true, time: null, weekdaysOnly: true }, mondayDue);
-  assert.equal(unset.due, false);
-  assert.equal(unset.reason, 'schedule_disabled');
-  const early = evaluateWorkSchedule({ enabled: true, time: '08:30', weekdaysOnly: true }, mondayMorning);
-  assert.equal(early.reason, 'before_time');
-  const weekend = evaluateWorkSchedule({ enabled: true, time: '08:30', weekdaysOnly: true }, stillSunday);
-  assert.equal(weekend.reason, 'weekend');
-  const due = evaluateWorkSchedule({ enabled: true, time: '08:30', weekdaysOnly: true }, mondayDue);
-  assert.equal(due.due, true);
-  assert.equal(due.dateKey, '2026-11-16');
-  const submitted = evaluateWorkSchedule({
+  assert.equal(shanghaiParts(prepareAt).dateKey, '2026-11-16');
+  const defaults = evaluateWorkSchedule(createEmptyWorkState().schedule, prepareAt);
+  assert.equal(defaults.due, false);
+  assert.equal(defaults.reason, 'not_accepted');
+  assert.equal(defaults.readyBy, '09:00');
+  assert.equal(defaults.prepareAt, '08:00');
+  const accepted = {
     enabled: true,
-    time: '08:30',
+    acceptedLocally: true,
+    readyBy: '09:00',
+    leadMinutes: 60,
     weekdaysOnly: true,
-    lastSubmittedDate: '2026-11-16',
-  }, mondayDue);
-  assert.equal(submitted.reason, 'already_submitted');
-  const caught = noteScheduleCatchup({
-    ...createEmptyWorkState(),
-    schedule: { enabled: true, time: '08:30', weekdaysOnly: true },
-  }, mondayDue);
+  };
+  assert.equal(evaluateWorkSchedule(accepted, beforePrepare).reason, 'before_time');
+  const due = evaluateWorkSchedule(accepted, prepareAt);
+  assert.equal(due.due, true);
+  assert.equal(due.prepareAt, '08:00');
+  assert.equal(evaluateWorkSchedule(accepted, stillSunday).reason, 'weekend');
+  assert.equal(evaluateWorkSchedule({ ...accepted, lastSubmittedDate: '2026-11-16' }, prepareAt).reason, 'already_submitted');
+  const caught = noteScheduleCatchup({ ...createEmptyWorkState(), schedule: accepted }, prepareAt);
   assert.equal(caught.changed, true);
   assert.equal(caught.state.schedule.pendingDate, '2026-11-16');
-  assert.equal(noteScheduleCatchup(caught.state, mondayDue).changed, false);
-  assert.equal(publicWorkSchedule({ enabled: true, time: '8:30', timezone: 'UTC' }).enabled, false);
-  assert.equal(publicWorkSchedule({ enabled: true, time: '08:30', timezone: 'UTC' }).timezone, 'Asia/Shanghai');
+  assert.equal(publicWorkSchedule({ enabled: true, readyBy: '09:00' }).enabled, false);
+  assert.equal(publicWorkSchedule({ enabled: true, readyBy: '09:00', acceptedLocally: true }).enabled, true);
+  assert.equal(publicWorkSchedule({ enabled: true, readyBy: '09:00', leadMinutes: 600, acceptedLocally: true }).prepareAt, '00:00');
 });
 
 test('failed backup or persist does not advance state and retry does not duplicate', () => {
@@ -332,9 +327,10 @@ test('transcript listing stays inside one explicit folder and skips media', () =
   }
   const listed = listTranscriptFolder(folder, { home: directory, appData: path.join(directory, 'appData') });
   assert.equal(listed.ok, true);
-  assert.deepEqual(listed.files.map((file) => file.name), ['demo.txt']);
-  assert.equal(listed.skipped.some((item) => item.reason === 'media_not_read'), true);
-  assert.equal(listed.files.some((file) => file.name === 'escape.txt'), false);
+  assert.deepEqual(listed.files.map((file) => file.relativePath).sort(), ['demo.txt', 'nested/hidden.txt', 'voice.m4a']);
+  assert.equal(listed.files.find((file) => file.relativePath === 'voice.m4a').kind, 'audio');
+  assert.equal(listed.files.some((file) => file.relativePath === 'escape.txt'), false);
+  assert.equal(listed.skipped.some((item) => item.reason === 'escape'), true);
   assert.equal(listTranscriptFolder(directory, { home: directory }).error, 'folder_too_broad');
   assert.equal(listTranscriptFolder('/', { home: directory }).error, 'folder_too_broad');
   const appData = path.join(directory, 'appData');
@@ -399,13 +395,20 @@ test('schedule script and adapter do not claim a model call', () => {
   ], { encoding: 'utf8' });
   assert.equal(disabled.status, 0);
   assert.equal(JSON.parse(disabled.stdout).due, false);
-  fs.writeFileSync(config, JSON.stringify({ enabled: true, time: '08:30', weekdaysOnly: true }));
+  fs.writeFileSync(config, JSON.stringify({
+    enabled: true,
+    acceptedLocally: true,
+    readyBy: '09:00',
+    leadMinutes: 60,
+    weekdaysOnly: true,
+  }));
   const due = spawnSync(process.execPath, [
     path.join(root, 'scripts/grok-work-schedule.js'),
     '--config', config,
-    '--now', '2026-11-16T00:30:00Z',
+    '--now', '2026-11-16T00:00:00Z',
   ], { encoding: 'utf8' });
   assert.equal(JSON.parse(due.stdout).due, true);
+  assert.equal(JSON.parse(due.stdout).prepareAt, '08:00');
   const adapter = spawnSync(process.execPath, [path.join(root, 'scripts/grok-work-adapter.js'), '--chat'], { encoding: 'utf8' });
   assert.equal(adapter.status, 2);
   assert.match(adapter.stderr, /不是 API/);

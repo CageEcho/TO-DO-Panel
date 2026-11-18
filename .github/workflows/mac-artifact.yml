@@ -1,0 +1,54 @@
+name: macOS arm64 artifact
+
+# 只上传构建产物，不创建 Release，不发布安装包。
+# 流水线里只有仓库代码和合成 fixture，没有本机工作目录、真实录音或密钥。
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/work-grok-import-de92
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    name: Build Apple Silicon DMG artifact
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: node --test tests/*.test.js
+      - name: Build unsigned arm64 DMG
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npm run build
+      - name: Verify and checksum DMG
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          app="dist.noindex/mac-arm64/TO-DO Panel Work.app"
+          dmg="dist.noindex/TO-DO-Panel-Work-${version}-arm64.dmg"
+          codesign --verify --deep --strict "$app"
+          hdiutil verify "$dmg"
+          shasum -a 256 "$dmg" | tee "dist.noindex/TO-DO-Panel-Work-${version}-arm64.dmg.sha256"
+          echo "artifact=$(basename "$dmg")" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-arm64-installer
+          path: |
+            dist.noindex/*.dmg
+            dist.noindex/*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14

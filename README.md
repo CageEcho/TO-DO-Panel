@@ -175,11 +175,75 @@ mv ~/Library/Application\ Support/TO-DO\ Panel\ Work/todo-inbox/.agent.tmp \
 本机转写和模型请求是两段：
 
 1. 录音仍只在你按下录音后开始，结束或退出时释放麦克风。工作导入不会自动开麦。
-2. 设置里选择一个专门的转写文件夹并打开开关后，应用只列出该文件夹顶层的 `.txt`、`.md`、`.json`、`.vtt`、`.srt`。不读音频，不递归，不扫描主目录或整块磁盘。
-3. 把文本交给 Grok 对话或你自己的整理流程。整理器输出 `grok-work/v1` JSON。
-4. `scripts/grok-work-import.js` 校验后原子写入定制版自己的 `todo-inbox/`。应用运行时约 2 秒读取；关闭期间文件留在收件箱，下次打开再处理。
+2. 在本机把授权根目录写进不进仓库的 `work-source.local.json`（示例只有占位符 `<WORK_ROOT>`）。准备脚本会递归这个根目录里的文本和录音。
+3. 录音先由本机转写程序写成文字。没有本地转写程序时，清单写明 `local_transcriber_missing`，音频留在原处，不会上传，也不会改用别的模型。
+4. 把 `work-materials/text/` 里已经脱敏的文字交给这次 Grok 对话。助手按下面的契约写出 `grok-work/v1` JSON。当前没有接通 Grok API，也不能凭空调用。
+5. `scripts/grok-work-import.js` 校验后原子写入定制版自己的 `todo-inbox/`。应用运行时约 2 秒读取；关闭期间文件留在收件箱，下次打开再处理。
 
-上班时间使用 `Asia/Shanghai`，默认只计算周一到周五。时间留空时，每日检查保持关闭。到点后应用只把这一天标成「待提交」，不会凭空生成任务。Mac 睡眠、合盖或关机时定时器不会运行；`scripts/launchd/` 里的 plist 是禁用的示例，应用不会安装它。关机期间不能写入本机待办。
+每个工作日的目标是 Asia/Shanghai 09:00 前准备好。提前量默认 60 分钟，准备从 08:00 开始，两项都可以改。自动检查在本机端到端验收前保持关闭。到点后应用只把这一天标成「待提交」，不会凭空生成任务。Mac 睡眠、合盖或关机时定时器不会运行；`scripts/launchd/` 里的 plist 是禁用的示例，应用不会安装它。关机期间不能写入本机待办。
+
+授权根目录的边界：
+
+- 只递归这一个根。`realpath` 必须仍在根目录里面。
+- 指到根外的符号链接会跳过，符号链接目录不会再往下走。
+- 隐藏文件、凭证文件名（如 `credentials.json`、`.env`、`*.pem`、`*.key`）和可执行文件不读取。
+- 超过体积上限的文件记为 `too_large`，不整文件读入。
+- 相同内容的录音用 SHA-256 做水位，重复的不再转写。
+- 清单里的路径是相对路径，并使用 `rootLabel: "private-local-root"`。绝对路径只留在本机私有配置，不写入仓库。
+
+### 协调端读写契约
+
+本机准备：
+
+```bash
+node scripts/work-source-prepare.js \
+  --root "<WORK_ROOT>" \
+  --out "<本机私有目录>/work-materials"
+```
+
+需要转写时再加 `--transcribe`。本地可执行文件来自 `TODO_PANEL_LOCAL_TRANSCRIBE`，或 PATH 上的 `whisper-cli` / `whisper`。程序约定是：第一个参数是音频路径，第二个参数是要写下的文本路径。它必须是本机程序，不能是云端地址。缺少这个程序时命令以状态码 2 退出，并在 `manifest.json` 里写下 `local_transcriber_missing`。
+
+助手读取的最小材料是本机 `work-materials/manifest.json` 和 `work-materials/text/*.txt`。这些文字需要已经脱敏。助手不读取授权根目录，也没有 Grok API key。
+
+助手写回一个文件，交给：
+
+```bash
+node scripts/grok-work-import.js \
+  --inbox "$HOME/Library/Application Support/TO-DO Panel Work/todo-inbox" \
+  --file "<整理结果>.json"
+```
+
+样例（来源用占位相对路径）：
+
+```json
+{
+  "schema": "grok-work/v1",
+  "generator": "grok-assistant",
+  "batchId": "weekday-morning",
+  "workDate": "2026-11-18",
+  "generatedAt": "2026-11-18T08:10:00+08:00",
+  "sourceKey": "private-local-root",
+  "sourceCursor": "audio-watermark",
+  "tasks": [
+    {
+      "sourceId": "recordings/sample#00:01:00#follow-up",
+      "action": "upsert",
+      "revision": 1,
+      "text": "根据本地转写整理出的一条待办",
+      "responsibility": "mine",
+      "group": "today",
+      "deadline": null,
+      "evidence": {
+        "excerpt": "转写里明确由我跟进的一句话。",
+        "sourceRef": "text/recordings_sample.m4a.txt",
+        "recordingAt": "00:01:00"
+      }
+    }
+  ]
+}
+```
+
+还缺的本机组件：一个不上传音频的本地转写程序。百炼实时转写仍只用于你按录音键时的在线转写，不走这条每日通路。Grok API 没有接通。
 
 ### 导入协议
 

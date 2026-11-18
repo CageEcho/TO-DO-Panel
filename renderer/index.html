@@ -459,15 +459,19 @@
                     <i aria-hidden="true"></i>
                   </label>
                   <div class="settings-device-row">
-                    <div><span>只列出文本转写</span><strong id="work-source-count">尚未读取</strong></div>
+                    <div><span>文本与录音</span><strong id="work-source-count">尚未读取</strong></div>
                     <span class="settings-device-actions">
                       <button id="work-source-choose" type="button">选择文件夹…</button>
                       <button id="work-source-refresh" type="button">刷新</button>
                     </span>
                   </div>
                   <label class="settings-device-row">
-                    <div><span>上班时间 · Asia/Shanghai</span><strong>留空则不自动检查</strong></div>
-                    <input id="work-schedule-time" type="time" aria-label="上班时间" />
+                    <div><span>工作日准备完成</span><strong>Asia/Shanghai，默认 09:00 前</strong></div>
+                    <input id="work-schedule-time" type="time" value="09:00" aria-label="工作待办准备完成时间" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>提前开始</span><strong id="work-schedule-prepare">默认提前 60 分钟</strong></div>
+                    <input id="work-schedule-lead" type="number" min="0" max="720" value="60" aria-label="提前分钟数" />
                   </label>
                   <label class="settings-device-row">
                     <div><span>只在工作日</span><strong>周六周日不提醒</strong></div>
@@ -475,11 +479,16 @@
                     <i aria-hidden="true"></i>
                   </label>
                   <label class="settings-device-row">
+                    <div><span>本机端到端已验收</span><strong>未验收时不能自动运行</strong></div>
+                    <input id="work-schedule-accepted" type="checkbox" aria-label="本机端到端已经验收" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <label class="settings-device-row">
                     <div><span>到点后标记待提交</span><strong>不生成任务</strong></div>
                     <input id="work-schedule-enabled" type="checkbox" aria-label="启用每日检查" />
                     <i aria-hidden="true"></i>
                   </label>
-                  <p class="settings-inline-note" id="work-settings-note">采集默认关闭。应用不会自动开麦，不会上传音频，也不会把聊天当成 Grok API。电脑关机或睡眠时不能写入待办；下次打开只会处理已经放进 todo-inbox 的文件。</p>
+                  <p class="settings-inline-note" id="work-settings-note">目标是每个工作日 09:00 前准备好。提前量默认 60 分钟，也就是 08:00 开始。自动检查保持关闭，直到这台电脑完成一次端到端验收。采集默认关闭，会递归授权根目录里的文本和录音，但不会上传音频，也不会把聊天当成 Grok API。</p>
                 </section>
 
                 <section class="tile settings-card settings-home-modules-card">

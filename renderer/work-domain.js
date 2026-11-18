@@ -85,8 +85,12 @@
       schedule: {
         timezone: WORK_TIMEZONE,
         weekdaysOnly: true,
+        readyBy: '09:00',
+        leadMinutes: 60,
+        prepareAt: '08:00',
+        time: '08:00',
         enabled: false,
-        time: null,
+        acceptedLocally: false,
         lastSubmittedDate: null,
         pendingDate: null,
       },
@@ -143,14 +147,31 @@
     return { enabled: raw.enabled === true && folders.length > 0, folders };
   }
 
+  function clockMinus(time, leadMinutes) {
+    const [hour, minute] = time.split(':').map(Number);
+    const total = (hour * 60 + minute - leadMinutes + 1440) % 1440;
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  }
+
   function normalizeSchedule(schedule) {
     const raw = schedule && typeof schedule === 'object' && !Array.isArray(schedule) ? schedule : {};
-    const time = normalizeTime(raw.time);
+    const readyBy = normalizeTime(raw.readyBy) || normalizeTime(raw.time) || '09:00';
+    const requestedLead = Number.isInteger(raw.leadMinutes) && raw.leadMinutes >= 0 && raw.leadMinutes <= 720
+      ? raw.leadMinutes
+      : 60;
+    const readyMinutes = Number(readyBy.slice(0, 2)) * 60 + Number(readyBy.slice(3));
+    const leadMinutes = Math.min(requestedLead, readyMinutes);
+    const prepareAt = clockMinus(readyBy, leadMinutes);
+    const acceptedLocally = raw.acceptedLocally === true;
     return {
       timezone: WORK_TIMEZONE,
       weekdaysOnly: raw.weekdaysOnly !== false,
-      enabled: raw.enabled === true && Boolean(time),
-      time,
+      readyBy,
+      leadMinutes,
+      prepareAt,
+      time: prepareAt,
+      acceptedLocally,
+      enabled: raw.enabled === true && acceptedLocally,
       lastSubmittedDate: normalizeDateKey(raw.lastSubmittedDate),
       pendingDate: normalizeDateKey(raw.pendingDate),
     };
@@ -296,10 +317,14 @@
       reason: 'schedule_disabled',
       dateKey: parts.dateKey,
       weekday: parts.weekday,
-      time: normalized.time,
+      readyBy: normalized.readyBy,
+      leadMinutes: normalized.leadMinutes,
+      prepareAt: normalized.prepareAt,
+      time: normalized.prepareAt,
+      acceptedLocally: normalized.acceptedLocally,
     };
+    if (!normalized.acceptedLocally) return { ...result, reason: 'not_accepted' };
     if (normalized.enabled !== true) return result;
-    if (!normalized.time) return { ...result, reason: 'time_unset' };
     const weekend = parts.weekday === 'Sat' || parts.weekday === 'Sun';
     if (normalized.weekdaysOnly && weekend) return { ...result, reason: 'weekend' };
     const [hour, minute] = normalized.time.split(':').map(Number);
@@ -325,8 +350,12 @@
       version: 1,
       timezone: normalized.timezone,
       weekdaysOnly: normalized.weekdaysOnly,
+      readyBy: normalized.readyBy,
+      leadMinutes: normalized.leadMinutes,
+      prepareAt: normalized.prepareAt,
+      time: normalized.prepareAt,
+      acceptedLocally: normalized.acceptedLocally,
       enabled: normalized.enabled,
-      time: normalized.time,
     };
   }
 
