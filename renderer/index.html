@@ -234,8 +234,8 @@
 
           <section id="tab-todo" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-todo" aria-hidden="true" inert>
             <div class="todo-view-switch" role="tablist" aria-label="待办视图">
-              <button id="todo-view-work" type="button" role="tab" aria-selected="true" aria-controls="todo-work-view">工作</button>
-              <button id="todo-view-classic" type="button" role="tab" aria-selected="false" aria-controls="todo-classic-view">分类待办</button>
+              <button id="todo-view-work" type="button" role="tab" aria-selected="true" aria-controls="todo-work-view">分类待办</button>
+              <button id="todo-view-classic" class="todo-view-secondary" type="button" role="tab" aria-selected="false" aria-controls="todo-classic-view">原四象限</button>
             </div>
             <div class="sections" id="todo-classic-view" hidden>
               <section class="quadrant tile" data-priority="P0">
@@ -319,14 +319,6 @@
               </section>
             </div>
             <div class="work-view" id="todo-work-view">
-              <div class="work-review-rail">
-                <p id="work-status">工作待办还没有导入。</p>
-                <div class="work-review-actions" id="work-review-actions"></div>
-                <label class="work-new-group">
-                  <span>新分组</span>
-                  <input id="work-new-group" type="text" maxlength="24" placeholder="添加分组，回车保存" aria-label="添加工作分组" />
-                </label>
-              </div>
               <div class="work-board" id="work-board"></div>
               <div class="work-drawer" id="work-drawer" hidden></div>
               <div class="todo-date-popover work-date-popover" id="work-date-popover" hidden>

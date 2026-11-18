@@ -113,50 +113,8 @@
 
   function render() {
     const board = document.getElementById('work-board');
-    const status = document.getElementById('work-status');
-    const rail = document.getElementById('work-review-actions');
     if (!board) return;
     const layout = domain.workBoardLayout(state);
-    const active = domain.activeWorkTasks(state);
-    if (status) {
-      const gap = state.schedule.pendingDate
-        ? `${state.schedule.pendingDate} 的整理还没做。应用当时没开着，不能补到当天 09:00。`
-        : '';
-      status.textContent = active.length
-        ? `可以直接改、勾选或删除。上方可以打开待确认和阻塞。${gap}`
-        : `还没有工作待办。在卡片下方输入，回车就会留下。${gap}`;
-    }
-    if (rail) {
-      rail.replaceChildren();
-      [...layout.review, ...layout.custom].forEach((group) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'work-review-chip';
-        button.setAttribute('aria-pressed', drawerGroup === group.id ? 'true' : 'false');
-        button.textContent = `${group.name} ${pendingCount(group.id)}`;
-        button.addEventListener('click', () => {
-          drawerGroup = drawerGroup === group.id ? '' : group.id;
-          render();
-        });
-        rail.append(button);
-        if (!group.system) {
-          const remove = document.createElement('button');
-          remove.type = 'button';
-          remove.className = 'work-group-remove';
-          remove.textContent = '移除';
-          remove.addEventListener('click', () => {
-            const removed = domain.removeWorkGroup(state, group.id);
-            if (!removed.ok) {
-              setNote(removed.error === 'group_not_empty' ? '分组里还有待办，不能移除。' : '这个分组不能移除。');
-              return;
-            }
-            if (drawerGroup === group.id) drawerGroup = '';
-            if (saveState(removed.state)) render();
-          });
-          rail.append(remove);
-        }
-      });
-    }
     board.replaceChildren();
     layout.slots.forEach((slot) => board.append(renderCard(slot)));
     renderDrawer(layout);

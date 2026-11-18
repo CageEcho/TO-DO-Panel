@@ -4931,6 +4931,10 @@ select:focus-visible {
   color: var(--text-1);
   background: var(--surface-2);
 }
+.todo-view-switch .todo-view-secondary:not([aria-selected='true']) {
+  color: var(--text-4);
+  background: transparent;
+}
 #tab-todo .sections,
 #tab-todo .work-view {
   flex: 1;

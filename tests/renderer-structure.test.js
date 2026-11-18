@@ -15,7 +15,10 @@ test('clipboard rows define both favorite icons before rendering entries', () =>
 
 test('todo page keeps the classic matrix and adds a separate work view', () => {
   assert.match(html, /id="todo-classic-view"/);
-  assert.match(html, /id="todo-view-work"[\s\S]*id="todo-view-classic"/);
+  assert.match(html, /id="todo-view-work"[^>]*>分类待办</);
+  assert.match(html, /id="todo-view-classic"[^>]*>原四象限</);
+  assert.equal(html.includes('id="work-review-rail"'), false);
+  assert.equal(html.includes('还没有工作待办'), false);
   assert.match(html, /id="todo-work-view"/);
   assert.equal(html.includes('把 grok-work/v1 JSON 放进'), false);
   assert.match(html, /id="work-board"/);
