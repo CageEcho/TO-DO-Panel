@@ -533,21 +533,31 @@
 
                 <section class="tile settings-card" id="settings-grok-card">
                   <div class="settings-card-heading">
-                    <div><span class="tile-label">Grok API</span><strong>独立于 TicNote</strong></div>
-                    <small>调用关闭</small>
+                    <div><span class="tile-label">Grok API</span><strong>上班前整理</strong></div>
+                    <small id="grok-enabled-label">默认关闭</small>
                   </div>
                   <label class="settings-device-row">
-                    <div><span>xAI API Key</span><strong id="grok-model-label">模型 grok-4，按 token 计费</strong></div>
+                    <div><span>xAI API Key</span><strong>只保存在本机加密存储</strong></div>
                     <input id="grok-api-key" type="password" maxlength="300" autocomplete="off" spellcheck="false" aria-label="Grok API Key" placeholder="留空则不保存" />
                   </label>
+                  <label class="settings-device-row">
+                    <div><span>模型 ID</span><strong id="grok-model-label">未填写，不假定某个模型可用</strong></div>
+                    <input id="grok-model" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-label="Grok 模型 ID" placeholder="从 xAI 控制台复制模型 ID" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>启用提取</span><strong id="grok-call-status">未启用，不会访问 api.x.ai</strong></div>
+                    <input id="grok-enabled" type="checkbox" aria-label="启用后把获准转写发送到 api.x.ai" />
+                    <i aria-hidden="true"></i>
+                  </label>
                   <div class="settings-device-row">
-                    <div><span>请求</span><strong id="grok-call-status">未配置，不会访问 api.x.ai</strong></div>
+                    <div><span>手动整理</span><strong>只处理已指定的 TicNote 文件夹</strong></div>
                     <span class="settings-device-actions">
-                      <button id="grok-save" type="button">保存密钥</button>
+                      <button id="grok-save" type="button">保存</button>
+                      <button id="grok-extract" type="button">整理一次</button>
                       <button id="grok-clear" type="button">清除</button>
                     </span>
                   </div>
-                  <p class="settings-inline-note">这把密钥和当前聊天订阅不是一回事，也和 TicNote 的 AppKey 分开存放。本版本即使保存了密钥也不会发送模型请求，不会换成其他供应商，也不会把 TicNote 转写上传到 xAI。缺密钥时保持关闭。</p>
+                  <p class="settings-inline-note">请求只发到 https://api.x.ai/v1/chat/completions。启用后，已授权文件夹里的转写文本会送去 xAI，按该账户的 token 用量计费。这不是当前聊天订阅，也不是 TicNote 的密钥。缺密钥、缺模型或没有勾选启用时不会出网。每日 09:00 前的自动整理仍要等本机验收后另开，现在保持关闭。应用睡眠或离线时不能保证当时写完，下次打开会标成待补做。</p>
                 </section>
 
                 <section class="tile settings-card settings-home-modules-card">

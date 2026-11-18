@@ -201,7 +201,7 @@ test('scope cannot be chosen by a similar folder name', () => {
   assert.equal(scope.folders[0].includesChildren, false);
 });
 
-test('grok configuration is stored apart from TicNote and never sends', () => {
+test('grok stays off until a model is saved and the user enables it', async () => {
   const store = memoryStore();
   let calls = 0;
   const grok = createGrokConfig({
@@ -210,22 +210,26 @@ test('grok configuration is stored apart from TicNote and never sends', () => {
     encrypt: (value) => `enc:${value}`,
     decrypt: (value) => String(value || '').replace(/^enc:/, ''),
   });
-  assert.equal(grok.execute().network, false);
   const saved = grok.saveKey('xai-test-key-value');
-  assert.equal(saved.status.callsEnabled, false);
-  assert.equal(saved.status.model, 'grok-4');
   assert.equal(saved.status.enabled, false);
   assert.equal(JSON.stringify(saved).includes('xai-test-key-value'), false);
-  grok.setRequestedEnabled(true);
-  assert.equal(grok.status().callsEnabled, false);
-  assert.equal(grok.execute(() => { calls += 1; }).reason, 'calls_disabled');
+  const blocked = await grok.extract({
+    materials: [{ sourceRef: 'ticnote:1/2/3', text: '我来跟进这件事。' }],
+    transport: () => { calls += 1; return { status: 200, body: '{}' }; },
+  });
+  assert.equal(blocked.reason, 'not_enabled');
   assert.equal(calls, 0);
+  assert.equal(grok.setEnabled(true).reason, 'no_model');
+  grok.saveModel('account-chosen-model');
+  grok.setEnabled(true);
+  assert.equal(grok.status().enabled, true);
+  assert.equal(grok.status().model, 'account-chosen-model');
   const plan = planUnattendedPrep({
     schedule: { acceptedLocally: false, enabled: false },
     ticnote: { configured: true, folderCount: 1 },
     grok: grok.status(),
   });
-  assert.equal(plan.willGenerateTodos, false);
   assert.equal(plan.willCallGrok, false);
   assert.equal(plan.blockedReason, 'not_accepted');
+  assert.match(plan.gap.message, /关闭、睡眠或离线/);
 });

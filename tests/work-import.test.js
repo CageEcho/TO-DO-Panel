@@ -419,7 +419,7 @@ test('schedule script and adapter do not claim a model call', () => {
   assert.equal(adapter.status, 2);
   assert.match(adapter.stderr, /不是 API/);
   assert.equal(assessGrokAdapter({ env: { GROK_API_BASE: 'https://api.openai.com', GROK_API_KEY: 'present' } }).reason, 'refusing_non_grok_host');
-  assert.equal(assessGrokAdapter({ env: { GROK_API_BASE: 'https://api.x.ai/v1', GROK_API_KEY: 'present' } }).reason, 'adapter_does_not_send');
+  assert.equal(assessGrokAdapter({ env: { GROK_API_BASE: 'https://api.x.ai/v1', GROK_API_KEY: 'present' } }).reason, 'not_enabled');
   const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   assert.equal(main.includes('LaunchAgents'), false);
   assert.equal(main.includes('launchctl'), false);

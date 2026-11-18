@@ -1,5 +1,6 @@
 // TicNote 只读接入。中国正式环境，精确 ID 授权，不上传、不发起转写、不跟随重定向。
 // 这个文件不读取钥匙串，也不发网络请求；调用方传入加密和 transport。
+const { cleanModel, runGrokExtraction, describePrepGap } = require('./grok-extract');
 
 const CHINA_ORIGIN = 'https://voice-api.ticnote.cn';
 const CHINA_HOST = 'voice-api.ticnote.cn';
@@ -7,7 +8,6 @@ const LOGIN_PATH = '/api/p1/appkey/login';
 const PROJECTS_PATH = '/api/v2/file-index/chats';
 const TREE_PATH = '/api/v1/file-index/file-tree';
 const DETAIL_PREFIX = '/api/v2/file-index/file-detail/';
-const GROK_MODEL = 'grok-4';
 const GROK_HOST = 'api.x.ai';
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const KEY_RE = /^tncn_sk_[A-Za-z0-9_-]{8,200}$/;
@@ -478,14 +478,25 @@ function createTicnoteSession({
     ));
   }
 
-  async function pullTranscripts() {
+  function commitWatermark(patch) {
     const state = readState();
-    if (!currentKey(state)) return { ok: false, reason: 'no_key', network: false, records: [] };
-    if (!state.scope.folders.length) return { ok: false, reason: 'scope_empty', network: false, records: [] };
-    if (!token) return { ok: false, reason: 'not_verified', network: false, records: [] };
+    const watermark = { ...state.watermark };
+    Object.keys(patch || {}).forEach((key) => {
+      if (patch[key] && patch[key].revision) watermark[key] = patch[key];
+    });
+    writeState({ ...state, watermark });
+    return { ok: true, status: status() };
+  }
+
+  async function pullTranscripts({ commitWatermark: shouldCommit = true } = {}) {
+    const state = readState();
+    if (!currentKey(state)) return { ok: false, reason: 'no_key', network: false, records: [], watermarkPatch: {} };
+    if (!state.scope.folders.length) return { ok: false, reason: 'scope_empty', network: false, records: [], watermarkPatch: {} };
+    if (!token) return { ok: false, reason: 'not_verified', network: false, records: [], watermarkPatch: {} };
     const records = [];
     let network = false;
     const watermark = { ...state.watermark };
+    const watermarkPatch = {};
     for (const project of state.scope.projects) {
       if (!trees.has(project.id)) {
         const listed = await listFolders(project.id);
@@ -502,13 +513,13 @@ function createTicnoteSession({
         const detail = await sendRead(buildRequest(`${DETAIL_PREFIX}${item.id}`, { token }), transport, token);
         network = true;
         if (!detail.ok) {
-          records.push({ recordId: item.id, missing: true, reason: detail.reason });
+          records.push({ recordId: item.id, missing: true, reason: detail.reason, failed: true });
           continue;
         }
         const body = parseJson(detail.body) || {};
         const text = transcriptText(body);
         const revision = detailRevision(body.data || body) || item.listRevision;
-        watermark[item.id] = { revision, listRevision: item.listRevision };
+        watermarkPatch[item.id] = { revision, listRevision: item.listRevision };
         records.push({
           recordId: item.id,
           projectId: item.projectId,
@@ -522,8 +533,8 @@ function createTicnoteSession({
         });
       }
     }
-    writeState({ ...readState(), watermark });
-    return { ok: true, network, records };
+    if (shouldCommit) writeState({ ...readState(), watermark: { ...watermark, ...watermarkPatch } });
+    return { ok: true, network, records, watermarkPatch, committed: shouldCommit === true };
   }
 
   return {
@@ -534,6 +545,7 @@ function createTicnoteSession({
     saveScope,
     listFolders,
     pullTranscripts,
+    commitWatermark,
     rememberCatalog(projects) {
       catalog = normalizeProjects({ chats: projects });
     },
@@ -543,16 +555,18 @@ function createTicnoteSession({
   };
 }
 
-function publicGrokStatus({ configured = false, enabled = false } = {}) {
+function publicGrokStatus({ configured = false, enabled = false, model = '' } = {}) {
+  const usable = configured === true && Boolean(cleanModel(model));
+  const callsEnabled = usable && enabled === true;
   return {
     configured: configured === true,
-    enabled: false,
-    requestedEnabled: configured === true && enabled === true,
-    model: GROK_MODEL,
+    enabled: callsEnabled,
+    model: cleanModel(model),
     endpointHost: GROK_HOST,
-    callsEnabled: false,
-    reason: 'calls_disabled',
-    billing: '按 xAI 账户的 token 单价计费，与当前聊天订阅不是同一把密钥。',
+    endpoint: 'https://api.x.ai/v1/chat/completions',
+    callsEnabled,
+    reason: callsEnabled ? 'ready' : (!configured ? 'no_key' : !cleanModel(model) ? 'no_model' : 'not_enabled'),
+    billing: '启用后，获准转写文本会发送到 api.x.ai，按该账户的 token 用量计费。模型 ID 需要你自己填写。',
   };
 }
 
@@ -562,43 +576,88 @@ function createGrokConfig({ encrypt, decrypt, load, save, log = () => {} } = {})
     const source = stored && typeof stored === 'object' ? stored : {};
     return {
       encryptedApiKey: typeof source.encryptedApiKey === 'string' ? source.encryptedApiKey : '',
-      requestedEnabled: source.requestedEnabled === true,
+      model: cleanModel(source.model),
+      enabled: source.enabled === true,
     };
   }
   function key() {
     const state = read();
     if (!state.encryptedApiKey || typeof decrypt !== 'function') return '';
     const value = String(decrypt(state.encryptedApiKey) || '').trim();
-    return value ? value : '';
+    if (!value || value === state.encryptedApiKey) return '';
+    return value;
+  }
+  function persist(next) {
+    if (typeof save !== 'function') return;
+    save({
+      version: 1,
+      encryptedApiKey: next.encryptedApiKey || '',
+      model: cleanModel(next.model),
+      enabled: next.enabled === true && Boolean(next.encryptedApiKey) && Boolean(cleanModel(next.model)),
+    });
   }
   function status() {
     const state = read();
-    return publicGrokStatus({ configured: Boolean(key()), enabled: state.requestedEnabled });
+    return publicGrokStatus({ configured: Boolean(key()), enabled: state.enabled, model: state.model });
   }
   function saveKey(apiKey) {
     const value = typeof apiKey === 'string' ? apiKey.trim() : '';
-    if (!value || value.length < 8 || value.length > 300) return { ok: false, reason: 'malformed', status: status() };
+    if (!value || value.length < 8 || value.length > 300 || /[\r\n]/.test(value)) {
+      return { ok: false, reason: 'malformed', status: status() };
+    }
     if (typeof encrypt !== 'function') return { ok: false, reason: 'secure_storage_unavailable', status: status() };
     const encrypted = encrypt(value);
-    if (!encrypted) return { ok: false, reason: 'secure_storage_unavailable', status: status() };
-    if (typeof save === 'function') save({ version: 1, encryptedApiKey: encrypted, requestedEnabled: false });
-    log('已加密保存 Grok API 密钥，请求仍关闭');
+    if (!encrypted || encrypted === value) return { ok: false, reason: 'secure_storage_unavailable', status: status() };
+    const state = read();
+    persist({ ...state, encryptedApiKey: encrypted, enabled: false });
+    log('已加密保存 Grok API 密钥，提取仍关闭');
     return { ok: true, status: status() };
   }
-  function setRequestedEnabled(enabled) {
+  function saveModel(model) {
+    const clean = cleanModel(model);
+    if (!clean) return { ok: false, reason: 'no_model', status: status() };
+    const state = read();
+    persist({ ...state, model: clean, enabled: false });
+    return { ok: true, status: status() };
+  }
+  function setEnabled(enabled) {
     const state = read();
     if (!key()) return { ok: false, reason: 'no_key', status: status() };
-    if (typeof save === 'function') save({ version: 1, encryptedApiKey: state.encryptedApiKey, requestedEnabled: enabled === true });
+    if (!state.model) return { ok: false, reason: 'no_model', status: status() };
+    persist({ ...state, enabled: enabled === true });
     return { ok: true, status: status() };
   }
   function clearKey() {
-    if (typeof save === 'function') save({ version: 1, encryptedApiKey: '', requestedEnabled: false });
+    persist({ encryptedApiKey: '', model: '', enabled: false });
     return { ok: true, status: status() };
   }
-  function execute() {
-    return { ok: false, network: false, reason: 'calls_disabled', model: GROK_MODEL };
+  function extract(options = {}) {
+    const state = read();
+    return runGrokExtraction({
+      apiKey: key(),
+      model: state.model,
+      enabled: state.enabled === true,
+      materials: options.materials || [],
+      state: options.state,
+      transport: options.transport,
+      now: options.now,
+      log,
+    });
   }
-  return { status, saveKey, setRequestedEnabled, clearKey, execute };
+  function extractFromPull(pull, options = {}) {
+    const state = read();
+    return runAuthorizedPrep({
+      enabled: state.enabled === true,
+      apiKey: key(),
+      model: state.model,
+      pull,
+      transport: options.transport,
+      state: options.state,
+      now: options.now,
+      log,
+    });
+  }
+  return { status, saveKey, saveModel, setEnabled, clearKey, extract, extractFromPull };
 }
 
 function planUnattendedPrep({ schedule = {}, ticnote = {}, grok = {} } = {}) {
@@ -608,27 +667,31 @@ function planUnattendedPrep({ schedule = {}, ticnote = {}, grok = {} } = {}) {
     ticnoteKey: ticnote.configured === true,
     ticnoteFolders: Number(ticnote.folderCount) > 0,
     grokKey: grok.configured === true,
-    grokCalls: false,
+    grokModel: Boolean(cleanModel(grok.model)),
+    grokEnabled: grok.enabled === true && grok.configured === true && Boolean(cleanModel(grok.model)),
   };
-  let blockedReason = 'calls_disabled';
+  let blockedReason = 'ready';
   if (!gates.ticnoteKey) blockedReason = 'ticnote_key_missing';
   else if (!gates.ticnoteFolders) blockedReason = 'ticnote_scope_empty';
   else if (!gates.grokKey) blockedReason = 'grok_key_missing';
+  else if (!gates.grokModel) blockedReason = 'no_model';
+  else if (!gates.grokEnabled) blockedReason = 'not_enabled';
   else if (!gates.scheduleAccepted) blockedReason = 'not_accepted';
   else if (!gates.scheduleEnabled) blockedReason = 'schedule_disabled';
+  const ready = blockedReason === 'ready';
   return {
-    willGenerateTodos: false,
-    willCallGrok: false,
+    willGenerateTodos: ready,
+    willCallGrok: ready,
     willUpload: false,
     gates,
     blockedReason,
+    gap: describePrepGap(schedule),
   };
 }
 
 module.exports = {
   CHINA_ORIGIN,
   CHINA_HOST,
-  GROK_MODEL,
   emptyScope,
   classifyAppKey,
   redactSecrets,

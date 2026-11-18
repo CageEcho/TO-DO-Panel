@@ -65,6 +65,8 @@ const {
 } = require('./main-services');
 const { publicWorkSchedule } = require('./renderer/work-domain');
 const { createTicnoteSession, createGrokConfig, CHINA_ORIGIN } = require('./main/ticnote');
+const { runAuthorizedPrep } = require('./main/grok-extract');
+const { planInboxWrite } = require('./scripts/grok-work-import');
 const { createAgentUsageMonitor } = require('./main/agent-usage');
 const { createNotchGeometry } = require('./main/notch-geometry');
 const { createMusicPlayers, normalizeMusicPreference } = require('./main/music-players');
@@ -2149,6 +2151,76 @@ ipcMain.handle('grok:clear-key', (event) => {
   if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
   return grokService().clearKey();
 });
+ipcMain.handle('grok:save-model', (event, model) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return grokService().saveModel(model);
+});
+ipcMain.handle('grok:set-enabled', (event, enabled) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = grokService().setEnabled(enabled === true);
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('grok:extract', async (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const prep = await grokService().extractFromPull(
+    (options) => ticnoteService().pullTranscripts(options),
+    { transport: xaiTransport },
+  );
+  if (!prep.ok || !prep.payload) return { ok: false, reason: prep.reason || 'extract_failed', network: prep.network === true };
+  ensureTodoInboxDir();
+  const plan = planInboxWrite({
+    inboxDir: workspacePath('todo-inbox'),
+    payload: prep.payload,
+    appData: OFFICIAL_APP_DATA,
+    now: new Date(),
+  });
+  if (!plan.ok) return { ok: false, reason: 'inbox_rejected', network: true };
+  const written = writeAtomicFile(path.join(plan.inbox, plan.fileName), JSON.stringify(prep.payload));
+  if (!written) return { ok: false, reason: 'inbox_write_failed', network: true };
+  ticnoteService().commitWatermark(prep.watermarkPatch || {});
+  return {
+    ok: true,
+    network: true,
+    imported: plan.preview.imported,
+    skipped: plan.preview.skipped,
+    scheduleEnabled: false,
+  };
+});
+
+function xaiTransport(request) {
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL(request.url); } catch (error) { resolve({ status: 0, body: '' }); return; }
+    if (url.origin !== 'https://api.x.ai' || url.pathname !== '/v1/chat/completions' || url.search) {
+      resolve({ status: 0, body: '' });
+      return;
+    }
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'POST',
+      headers: request.headers,
+      timeout: 30000,
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 200000) chunks.push(chunk);
+      });
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: { location: res.headers.location || '' },
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, error: 'timeout', body: '' }); });
+    if (request.body) req.write(request.body);
+    req.end();
+  });
+}
 
 function getLayoutMetrics(display) {
   const d = display || getWindowDisplay();

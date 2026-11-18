@@ -119,9 +119,12 @@
     const layout = domain.workBoardLayout(state);
     const active = domain.activeWorkTasks(state);
     if (status) {
+      const gap = state.schedule.pendingDate
+        ? `${state.schedule.pendingDate} 的整理还没做。应用当时没开着，不能补到当天 09:00。`
+        : '';
       status.textContent = active.length
-        ? '可以直接改、勾选或删除。上方可以打开待确认和阻塞。'
-        : '还没有工作待办。在卡片下方输入，回车就会留下。';
+        ? `可以直接改、勾选或删除。上方可以打开待确认和阻塞。${gap}`
+        : `还没有工作待办。在卡片下方输入，回车就会留下。${gap}`;
     }
     if (rail) {
       rail.replaceChildren();
@@ -715,11 +718,21 @@
               : '已保存密钥，还没有指定文件夹';
         }
       }
+      const grokEnabled = document.getElementById('grok-enabled');
+      const grokLabel = document.getElementById('grok-enabled-label');
       if (grok?.status) {
-        if (model) model.textContent = `模型 ${grok.status.model}，按 token 计费`;
-        if (grokStatus) grokStatus.textContent = grok.status.configured
-          ? '密钥已保存，本版本不向 api.x.ai 发送请求'
-          : '未配置，不会访问 api.x.ai';
+        if (model) {
+          model.textContent = grok.status.model
+            ? `当前填写的模型是 ${grok.status.model}`
+            : '未填写，不假定某个模型可用';
+        }
+        if (grokStatus) {
+          grokStatus.textContent = grok.status.enabled
+            ? '已启用。整理时会把获准转写发送到 api.x.ai，并按 token 计费。每日自动仍关闭。'
+            : '未启用，不会访问 api.x.ai';
+        }
+        if (grokEnabled && document.activeElement !== grokEnabled) grokEnabled.checked = grok.status.enabled === true;
+        if (grokLabel) grokLabel.textContent = grok.status.enabled ? '已启用' : '默认关闭';
       }
     };
     document.getElementById('ticnote-save')?.addEventListener('click', async () => {
@@ -758,9 +771,46 @@
       refresh();
     });
     document.getElementById('grok-save')?.addEventListener('click', async () => {
-      const saved = await window.notchAPI?.grokSaveKey?.(grokInput?.value || '');
-      if (grokInput) grokInput.value = '';
-      if (!saved?.ok) setNote('Grok 密钥没有保存。');
+      if (grokInput?.value) {
+        const saved = await window.notchAPI?.grokSaveKey?.(grokInput.value);
+        grokInput.value = '';
+        if (!saved?.ok) setNote(saved?.reason === 'secure_storage_unavailable' ? '这台系统不能加密保存密钥，没有写入。' : 'Grok 密钥没有保存。');
+      }
+      const modelValue = document.getElementById('grok-model')?.value || '';
+      if (modelValue) {
+        const savedModel = await window.notchAPI?.grokSaveModel?.(modelValue);
+        if (!savedModel?.ok) setNote('模型 ID 只能是字母、数字、点、下划线、冒号或连字符。');
+      }
+      refresh();
+    });
+    document.getElementById('grok-enabled')?.addEventListener('change', async (event) => {
+      const saved = await window.notchAPI?.grokSetEnabled?.(event.currentTarget.checked === true);
+      if (!saved?.ok) {
+        event.currentTarget.checked = false;
+        setNote(saved?.reason === 'no_model' ? '先填写模型 ID。启用后转写会发送到 xAI 并按量计费。' : '先保存密钥。没有密钥时不会出网。');
+      } else if (event.currentTarget.checked) {
+        setNote('已启用提取。获准转写会发送到 api.x.ai，按 token 计费。每日自动整理仍关闭。');
+      }
+      refresh();
+    });
+    document.getElementById('grok-extract')?.addEventListener('click', async () => {
+      const result = await window.notchAPI?.grokExtract?.();
+      if (!result?.ok) {
+        const reasons = {
+          not_enabled: '还没有启用。不会访问 api.x.ai。',
+          no_key: '没有密钥，不会出网。',
+          no_model: '没有模型 ID，不会出网。',
+          ticnote_scope_empty: '还没有指定 TicNote 文件夹，不会读取正文。',
+          scope_empty: '还没有指定 TicNote 文件夹，不会读取正文。',
+          no_transcript: '授权文件夹里没有可发送的转写，没有向 xAI 发请求。',
+          bad_output: '模型输出不能核对到来源摘录，没有写入待办。',
+          timeout: '模型超时，没有写入待办，也不会把材料标成已处理。',
+          rate_limited: '模型限流，没有写入待办，也不会把材料标成已处理。',
+        };
+        setNote(reasons[result?.reason] || '这次没有写入待办。');
+      } else {
+        setNote(result.imported ? `已放入收件箱 ${result.imported} 条。每日自动仍关闭。` : '没有新的待办。每日自动仍关闭。');
+      }
       refresh();
     });
     document.getElementById('grok-clear')?.addEventListener('click', async () => {

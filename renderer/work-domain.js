@@ -857,7 +857,7 @@
     return { known: true, deadline: new Date(deadline).toISOString(), label: `${days}天`, tone: 'yellow', days, overdue: false };
   }
 
-  function assessGrokAdapter({ env = {}, argv = [] } = {}) {
+  function assessGrokAdapter({ env = {}, argv = [], enabled = false, model = '' } = {}) {
     const args = Array.isArray(argv) ? argv.map((item) => String(item)) : [];
     if (args.includes('--chat') || args.includes('--from-chat')) {
       return { ok: false, reason: 'chat_is_not_api' };
@@ -875,11 +875,10 @@
       return { ok: false, reason: 'bad_base_url' };
     }
     if (host !== 'api.x.ai') return { ok: false, reason: 'refusing_non_grok_host' };
-    return {
-      ok: false,
-      reason: 'adapter_does_not_send',
-      detail: '本版本不代发模型请求。请把整理结果写成 grok-work/v1 JSON，再用本地收件箱导入。',
-    };
+    if (enabled !== true || !model) {
+      return { ok: false, reason: 'not_enabled', detail: 'Grok 提取默认关闭。要在应用里填写模型并主动启用后才会请求 api.x.ai。' };
+    }
+    return { ok: true, reason: 'ready', host: 'api.x.ai' };
   }
 
   return {

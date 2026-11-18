@@ -15,7 +15,7 @@ function main() {
     not_configured: '没有配置 Grok API。当前不需要密钥，用合成 JSON 即可导入。',
     bad_base_url: 'GROK_API_BASE 不是合法地址。',
     refusing_non_grok_host: '只接受 api.x.ai。不会改用其他模型冒充 Grok。',
-    adapter_does_not_send: decision.detail,
+    not_enabled: decision.detail,
   };
   console.error(message[decision.reason] || '适配器未发送请求。');
   process.exitCode = 2;
