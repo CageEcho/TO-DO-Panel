@@ -474,7 +474,7 @@ test('startup opens work even if classic was remembered, and manual tasks surviv
   assert.equal(resolveTodoSubview('startup'), 'work');
   assert.equal(resolveTodoSubview('restart'), 'work');
   assert.equal(resolveTodoSubview('enter-todo'), 'work');
-  assert.equal(resolveTodoSubview('classic'), 'classic');
+  assert.equal(resolveTodoSubview('categories'), 'categories');
   const manual = createManualWorkTask(createEmptyWorkState(), { text: '我亲手记的', groupId: 'desk' }, NOW);
   const hand = manual.state.tasks[0];
   assert.equal(hand.evidence.excerpt, '');

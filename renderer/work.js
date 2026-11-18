@@ -605,38 +605,23 @@
   }
 
   function bind() {
-    const classic = document.getElementById('todo-view-classic');
     const work = document.getElementById('todo-view-work');
-    const classicView = document.getElementById('todo-classic-view');
-    const workView = document.getElementById('todo-work-view');
+    const categories = document.getElementById('todo-view-categories');
+    const columnsView = document.getElementById('todo-work-columns-view');
+    const boardView = document.getElementById('todo-work-view');
     function show(which) {
-      const useWork = domain.resolveTodoSubview(which) === 'work';
-      if (classicView) classicView.hidden = useWork;
-      if (workView) workView.hidden = !useWork;
-      classic?.setAttribute('aria-selected', useWork ? 'false' : 'true');
-      work?.setAttribute('aria-selected', useWork ? 'true' : 'false');
-      if (useWork) render();
+      const useColumns = domain.resolveTodoSubview(which) !== 'categories';
+      if (columnsView) columnsView.hidden = !useColumns;
+      if (boardView) boardView.hidden = useColumns;
+      work?.setAttribute('aria-selected', useColumns ? 'true' : 'false');
+      categories?.setAttribute('aria-selected', useColumns ? 'false' : 'true');
+      render();
     }
-    classic?.addEventListener('click', () => show('classic'));
     work?.addEventListener('click', () => show('work'));
+    categories?.addEventListener('click', () => show('categories'));
     document.addEventListener('notch:tabchange', (event) => {
       if (event.detail?.tab === 'todo') show('enter-todo');
-      if (event.detail?.tab === 'home') renderHomeColumns();
     });
-    const dashboard = document.getElementById('home-bento');
-    const homeWork = document.getElementById('home-work-view');
-    const dashboardButton = document.getElementById('home-view-dashboard');
-    const homeWorkButton = document.getElementById('home-view-work');
-    function showHome(which) {
-      const useWork = which === 'work';
-      if (dashboard) dashboard.hidden = useWork;
-      if (homeWork) homeWork.hidden = !useWork;
-      dashboardButton?.setAttribute('aria-selected', useWork ? 'false' : 'true');
-      homeWorkButton?.setAttribute('aria-selected', useWork ? 'true' : 'false');
-      if (useWork) render();
-    }
-    dashboardButton?.addEventListener('click', () => showHome('dashboard'));
-    homeWorkButton?.addEventListener('click', () => showHome('work'));
     show('startup');
 
     document.getElementById('work-new-group')?.addEventListener('keydown', (event) => {

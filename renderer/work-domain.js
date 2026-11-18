@@ -808,7 +808,7 @@
   }
 
   function resolveTodoSubview(event) {
-    if (event === 'classic') return 'classic';
+    if (event === 'categories') return 'categories';
     return 'work';
   }
 

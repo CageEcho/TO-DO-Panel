@@ -14,9 +14,14 @@ test('clipboard rows define both favorite icons before rendering entries', () =>
 });
 
 test('todo page keeps the classic matrix and adds a separate work view', () => {
-  assert.match(html, /id="todo-classic-view"/);
-  assert.match(html, /id="todo-view-work"[^>]*>分类待办</);
-  assert.match(html, /id="todo-view-classic"[^>]*>原四象限</);
+  assert.match(html, /id="todo-view-work"[^>]*>工作</);
+  assert.match(html, /id="todo-view-categories"[^>]*>分类待办</);
+  assert.match(html, /id="todo-work-columns-view"/);
+  assert.equal(html.includes('原四象限'), false);
+  assert.equal(html.includes('id="todo-classic-view"'), false);
+  assert.equal(html.includes('id="home-view-work"'), false);
+  assert.equal(html.includes('id="home-work-view"'), false);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8'), /notch-todo-data/);
   assert.equal(html.includes('id="work-review-rail"'), false);
   assert.equal(html.includes('还没有工作待办'), false);
   assert.match(html, /id="todo-work-view"/);
