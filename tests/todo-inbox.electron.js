@@ -155,6 +155,31 @@ async function main() {
     return todos.P0.some(({ id }) => id === 'agent-live-1') && todos.P2.length === 1 && todos.P3.length === 1;
   }, 'workspace.json sync');
 
+  // 6. 工作导入走同一收件箱，但不改分类待办；同一文件再放一次不复制。
+  const workPayload = fs.readFileSync(path.join(__dirname, '../fixtures/work-import/demo-batch.json'));
+  fs.writeFileSync(path.join(inbox, '.work.json.tmp'), workPayload);
+  fs.renameSync(path.join(inbox, '.work.json.tmp'), path.join(inbox, 'work.json'));
+  const workReport = await until(() => reportFor('work'), 'work report');
+  assert.equal(workReport.status, 'partial');
+  assert.equal(workReport.summary.imported, 3);
+  assert.match(workReport.skipped.map((item) => item.reason).join('\n'), /非本人责任/);
+  const workState = await page.executeJavaScript(`JSON.parse(localStorage.getItem('notch-work-tasks-v1'))`);
+  const visibleWork = workState.tasks.filter((task) => !task.revoked && !task.dismissed);
+  assert.deepEqual(visibleWork.map((task) => [task.groupId, task.deadline]), [
+    ['today', null],
+    ['confirm', null],
+    ['blocked', null],
+  ]);
+  assert.equal(visibleWork.every((task) => task.evidence.excerpt && task.evidence.sourceRef), true);
+  const classicAfterWork = await readTodos();
+  assert.deepEqual(classicAfterWork.data, state.data, 'work import must not change P0–P3');
+  fs.writeFileSync(path.join(inbox, 'work-replay.json'), workPayload);
+  const workReplay = await until(() => reportFor('work-replay'), 'work replay report');
+  assert.equal(workReplay.status, 'none');
+  const workAfterReplay = await page.executeJavaScript(`JSON.parse(localStorage.getItem('notch-work-tasks-v1')).tasks.length`);
+  assert.equal(workAfterReplay, visibleWork.length);
+  assert.equal(fs.existsSync(path.join(profile, 'work-import-backups')), true);
+
   assert.deepEqual(errors, []);
   console.log('Todo inbox import checks passed');
 }

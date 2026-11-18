@@ -52,12 +52,17 @@ const {
   parseTodoInboxBuffer,
   todoInboxArchiveNames,
   buildTodoInboxReport,
+  isOfficialPanelDataPath,
+  listTranscriptFolder,
+  backupWorkStateFile,
+  writeAtomicFile,
   hoverSpacePollingPolicy,
   reduceClipboardObservation,
   normalizeDefaultTabPreference,
   updateDefaultTabPreference,
   createForegroundMediaPermissionCoordinator,
 } = require('./main-services');
+const { publicWorkSchedule } = require('./renderer/work-domain');
 const { createAgentUsageMonitor } = require('./main/agent-usage');
 const { createNotchGeometry } = require('./main/notch-geometry');
 const { createMusicPlayers, normalizeMusicPreference } = require('./main/music-players');
@@ -67,12 +72,13 @@ const {
   permissionSettingsUrl,
 } = require('./main/permissions');
 
-// Keep the historical data directory so upgrading users retain notes, links,
-// recordings and encrypted settings after the public product rename.
-const LEGACY_USER_DATA_PATH = path.join(app.getPath('appData'), 'Dynamic Panel');
-app.setName('TO-DO Panel');
+// 定制版使用单独的应用名和数据目录，避免覆盖已安装的官方 TO-DO Panel
+// 及其 ~/Library/Application Support/Dynamic Panel（Windows 为 %APPDATA%\Dynamic Panel）。
+const OFFICIAL_APP_DATA = app.getPath('appData');
+const WORK_USER_DATA_PATH = path.join(OFFICIAL_APP_DATA, 'TO-DO Panel Work');
+app.setName('TO-DO Panel Work');
 // Honor Electron's standard profile switch for isolated automated tests.
-app.setPath('userData', app.commandLine.getSwitchValue('user-data-dir') || LEGACY_USER_DATA_PATH);
+app.setPath('userData', app.commandLine.getSwitchValue('user-data-dir') || WORK_USER_DATA_PATH);
 
 // ============ 托盘图标 PNG 生成 ============
 // 直接在主进程编码 PNG，避免引入额外资源文件
@@ -259,7 +265,8 @@ const TASK_NOTIFICATION_DEDUPE_MS = 2000;
 const TASK_NOTIFICATION_MAX_QUEUE = 5;
 const TASK_NOTIFICATION_BODY_LIMIT = 64 * 1024;
 const TASK_NOTIFICATION_HOST = '127.0.0.1';
-const TASK_NOTIFICATION_PORT = 43821;
+// 官方应用继续占用 43821。定制版改用 43831，避免两个应用抢同一个本机端口。
+const TASK_NOTIFICATION_PORT = 43831;
 // /notify/<source> 的来源白名单：只放行已知 Agent，其余一律 404。
 const TASK_NOTIFICATION_SOURCES = new Set(['codex', 'gpt', 'claude']);
 const TODO_REMINDER_LEAD_MS = 60 * 60 * 1000;
@@ -1419,7 +1426,10 @@ function workspaceRoot() {
   if (cachedWorkspaceRoot) return cachedWorkspaceRoot;
   const settings = readJsonFile(getJsonSettingsPath(WORKSPACE_SETTINGS_FILE));
   const configured = String(settings.path || '').trim();
-  cachedWorkspaceRoot = configured && path.isAbsolute(configured) ? configured : app.getPath('userData');
+  const usesOfficialData = configured && isOfficialPanelDataPath(configured, OFFICIAL_APP_DATA);
+  cachedWorkspaceRoot = configured && path.isAbsolute(configured) && !usesOfficialData
+    ? configured
+    : app.getPath('userData');
   return cachedWorkspaceRoot;
 }
 
@@ -1470,11 +1480,12 @@ function copyWorkspaceAssets(sourceRoot, targetRoot) {
 
 async function chooseWorkspaceFolder() {
   const result = await showOwnedOpenDialog({
-    title: '选择 TO-DO Panel 数据文件夹',
+    title: '选择 TO-DO Panel Work 数据文件夹',
     properties: ['openDirectory', 'createDirectory'],
   });
   const selected = !result.canceled && result.filePaths && result.filePaths[0];
   if (!selected) return false;
+  if (isOfficialPanelDataPath(selected, OFFICIAL_APP_DATA)) return 'official-protected';
   const previousRoot = workspaceRoot();
   copyWorkspaceAssets(previousRoot, selected);
   if (!writeJsonFile(getJsonSettingsPath(WORKSPACE_SETTINGS_FILE), { path: selected })) return false;
@@ -1684,16 +1695,16 @@ function refreshTrayMenu() {
       click: () => {
         dialog.showMessageBox({
           type: 'info',
-          title: '关于 TO-DO Panel',
-          message: 'TO-DO Panel',
+          title: '关于 TO-DO Panel Work',
+          message: 'TO-DO Panel Work',
           detail:
-            `版本 ${app.getVersion()}\n\n一个开源、常驻屏幕顶部的本地工作台。工作区数据默认保存在本机；账号密码与 API Key 由系统安全存储加密。\n\nMIT License`,
+            `版本 ${app.getVersion()}\n\n基于 xiaopu-ai TO-DO Panel 的个人工作版，保留 MIT 许可。数据目录与官方应用分开，不会写入 Dynamic Panel。\n\n账号密码与 API Key 由系统安全存储加密。`,
           buttons: ['查看 GitHub', '好'],
           defaultId: 1,
           cancelId: 1,
           noLink: true,
         }).then(({ response }) => {
-          if (response === 0) shell.openExternal('https://github.com/xiaopu-ai/TO-DO-Panel');
+          if (response === 0) shell.openExternal('https://github.com/CageEcho/TO-DO-Panel');
         });
       },
     },
@@ -1709,7 +1720,7 @@ function refreshTrayMenu() {
 
 function createTray() {
   tray = new Tray(createNotchTrayIcon());
-  tray.setToolTip('TO-DO Panel');
+  tray.setToolTip('TO-DO Panel Work');
   tray.on('click', () => {
     if (!mainWindow) return;
     if (!mainWindow.isVisible()) {
@@ -1921,6 +1932,7 @@ function scanTodoInbox() {
       token,
       fileName: name,
       sourceId: parsed.hash.slice(0, 12),
+      fileHash: parsed.hash,
       payload: parsed.payload,
     });
   }
@@ -1965,6 +1977,42 @@ ipcMain.handle('todo-inbox:complete', (event, token, result) => {
   } catch (error) {}
   finishTodoInboxFile(job.filePath, job.hash, buildTodoInboxReport({ fileName: job.fileName, result }));
   return true;
+});
+
+function isMainWindowSender(event) {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents);
+}
+
+ipcMain.handle('work:backup-state', (event, jsonText) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return backupWorkStateFile(workspacePath('work-import-backups'), jsonText, new Date(), { appData: OFFICIAL_APP_DATA });
+});
+
+ipcMain.handle('work:publish-schedule', (event, schedule) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const published = publicWorkSchedule(schedule);
+  const written = writeAtomicFile(workspacePath('work-schedule.json'), JSON.stringify(published, null, 2));
+  return written ? { ok: true, schedule: published } : { ok: false, error: 'write' };
+});
+
+ipcMain.handle('work:choose-transcript-folder', async (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = await showOwnedOpenDialog({
+    title: '选择转写文件夹',
+    properties: ['openDirectory'],
+  });
+  const selected = !result.canceled && result.filePaths && result.filePaths[0];
+  if (!selected) return { ok: false, error: 'cancelled' };
+  if (isOfficialPanelDataPath(selected, OFFICIAL_APP_DATA)) return { ok: false, error: 'official_data_dir' };
+  const home = app.getPath('home');
+  const listed = listTranscriptFolder(selected, { appData: OFFICIAL_APP_DATA, home, maxFiles: 1 });
+  if (!listed.ok && listed.error === 'folder_too_broad') return { ok: false, error: 'folder_too_broad' };
+  return { ok: true, path: path.resolve(selected) };
+});
+
+ipcMain.handle('work:list-transcripts', (event, folder) => {
+  if (!isMainWindowSender(event) || typeof folder !== 'string') return { ok: false, error: 'sender' };
+  return listTranscriptFolder(folder, { appData: OFFICIAL_APP_DATA, home: app.getPath('home') });
 });
 
 function getLayoutMetrics(display) {

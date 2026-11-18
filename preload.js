@@ -65,6 +65,10 @@ contextBridge.exposeInMainWorld('notchAPI', {
   onTodoInboxImport: (cb) => subscribe('todo-inbox:import', (event, message) => cb(message)),
   todoInboxReady: () => ipcRenderer.invoke('todo-inbox:ready'),
   completeTodoInbox: (token, result) => ipcRenderer.invoke('todo-inbox:complete', token, result),
+  backupWorkState: (jsonText) => ipcRenderer.invoke('work:backup-state', jsonText),
+  publishWorkSchedule: (schedule) => ipcRenderer.invoke('work:publish-schedule', schedule),
+  chooseTranscriptFolder: () => ipcRenderer.invoke('work:choose-transcript-folder'),
+  listTranscripts: (folder) => ipcRenderer.invoke('work:list-transcripts', folder),
   onCollapseRequest: (cb) => subscribe('window:request-collapse', () => cb()),
   getMetrics: () => ipcRenderer.invoke('window:metrics'),
   onMetricsChanged: (cb) =>

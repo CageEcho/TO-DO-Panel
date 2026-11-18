@@ -13,6 +13,18 @@ test('clipboard rows define both favorite icons before rendering entries', () =>
   assert.match(appJs, /const starFilledSvg\s*=/);
 });
 
+test('todo page keeps the classic matrix and adds a separate work view', () => {
+  assert.match(html, /id="todo-classic-view"/);
+  assert.match(html, /id="todo-work-view"/);
+  assert.match(html, /id="work-source-enabled"/);
+  assert.match(html, /src="work-domain\.js"/);
+  assert.match(appJs, /routeTodoInboxPayload/);
+  const workJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'work.js'), 'utf8');
+  assert.equal(workJs.includes('getUserMedia'), false);
+  assert.equal(workJs.includes("setItem('notch-todo-data'"), false);
+  assert.equal(workJs.includes('setItem("notch-todo-data"'), false);
+});
+
 test('notes have a dedicated top-level tab and management panel', () => {
   assert.match(html, /data-tab="notes"/);
   assert.match(html, /id="tab-notes"/);

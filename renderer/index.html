@@ -7,7 +7,7 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TO-DO Panel</title>
+    <title>TO-DO Panel Work</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -226,7 +226,11 @@
           </section>
 
           <section id="tab-todo" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-todo" aria-hidden="true" inert>
-            <div class="sections">
+            <div class="todo-view-switch" role="tablist" aria-label="待办视图">
+              <button id="todo-view-classic" type="button" role="tab" aria-selected="true" aria-controls="todo-classic-view">分类待办</button>
+              <button id="todo-view-work" type="button" role="tab" aria-selected="false" aria-controls="todo-work-view">工作</button>
+            </div>
+            <div class="sections" id="todo-classic-view">
               <section class="quadrant tile" data-priority="P0">
                 <div class="quadrant-header">
                   <span class="dot dot-p0"></span>
@@ -306,6 +310,16 @@
                   <button class="todo-deadline-trigger" type="button" data-deadline-priority="P3" aria-label="选择日常待办截止时间"><span>日期</span></button>
                 </div>
               </section>
+            </div>
+            <div class="work-view" id="todo-work-view" hidden>
+              <div class="work-toolbar">
+                <p id="work-status">工作待办还没有导入。</p>
+                <label class="work-new-group">
+                  <span>新分组</span>
+                  <input id="work-new-group" type="text" maxlength="24" placeholder="添加分组，回车保存" aria-label="添加工作分组" />
+                </label>
+              </div>
+              <div class="work-columns" id="work-columns"></div>
             </div>
           </section>
 
@@ -432,6 +446,40 @@
                     <label><span><b>密钥</b><small>本机安全存储</small></span><input type="checkbox" data-settings-feature="credentials" aria-label="显示密钥" /><i aria-hidden="true"></i></label>
                     <label><span><b>剪贴板</b><small>默认关闭</small></span><input type="checkbox" data-settings-feature="clip" aria-label="显示剪贴板" /><i aria-hidden="true"></i></label>
                   </div>
+                </section>
+
+                <section class="tile settings-card settings-work-card" id="settings-work-card">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">工作导入</span><strong>转写与上班前整理</strong></div>
+                    <small>默认关闭</small>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>读取转写文件夹</span><strong id="work-source-path">未选择</strong></div>
+                    <input id="work-source-enabled" type="checkbox" aria-label="启用已选转写文件夹" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <div class="settings-device-row">
+                    <div><span>只列出文本转写</span><strong id="work-source-count">尚未读取</strong></div>
+                    <span class="settings-device-actions">
+                      <button id="work-source-choose" type="button">选择文件夹…</button>
+                      <button id="work-source-refresh" type="button">刷新</button>
+                    </span>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>上班时间 · Asia/Shanghai</span><strong>留空则不自动检查</strong></div>
+                    <input id="work-schedule-time" type="time" aria-label="上班时间" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>只在工作日</span><strong>周六周日不提醒</strong></div>
+                    <input id="work-schedule-weekdays" type="checkbox" checked aria-label="只在工作日检查" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>到点后标记待提交</span><strong>不生成任务</strong></div>
+                    <input id="work-schedule-enabled" type="checkbox" aria-label="启用每日检查" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <p class="settings-inline-note" id="work-settings-note">采集默认关闭。应用不会自动开麦，不会上传音频，也不会把聊天当成 Grok API。电脑关机或睡眠时不能写入待办；下次打开只会处理已经放进 todo-inbox 的文件。</p>
                 </section>
 
                 <section class="tile settings-card settings-home-modules-card">
@@ -579,6 +627,8 @@
     </div>
     <script src="../platform.js"></script>
     <script src="domain.js"></script>
+    <script src="work-domain.js"></script>
+    <script src="work.js"></script>
     <script src="effects.js"></script>
     <script src="app.js"></script>
     <script src="workspace.js"></script>

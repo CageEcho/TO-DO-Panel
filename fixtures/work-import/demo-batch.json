@@ -1,0 +1,58 @@
+{
+  "schema": "grok-work/v1",
+  "batchId": "fixture-2026-11-18",
+  "workDate": "2026-11-18",
+  "generatedAt": "2026-11-18T01:00:00+08:00",
+  "generator": "fixture",
+  "sourceKey": "demo-standup",
+  "sourceCursor": "demo-standup#00:12:18",
+  "tasks": [
+    {
+      "sourceId": "fixture-standup#00:04:12#summary",
+      "action": "upsert",
+      "text": "把合成会议里提到的接口说明补进本地文档",
+      "responsibility": "mine",
+      "group": "today",
+      "deadline": null,
+      "evidence": {
+        "excerpt": "我来把接口说明补进本地文档，今天下班前给同事看一版。",
+        "sourceRef": "fixtures/transcripts/demo-standup.txt",
+        "recordingAt": "00:04:12"
+      }
+    },
+    {
+      "sourceId": "fixture-standup#00:09:40#maybe",
+      "action": "upsert",
+      "text": "确认合成会议里的排期是否由我跟进",
+      "responsibility": "uncertain",
+      "evidence": {
+        "excerpt": "排期可能还要再对一下，先不确定是不是我这边。",
+        "sourceRef": "fixtures/transcripts/demo-standup.txt",
+        "recordingAt": "00:09:40"
+      }
+    },
+    {
+      "sourceId": "fixture-standup#00:11:02#blocked",
+      "action": "upsert",
+      "text": "等对方确认测试环境后再继续联调",
+      "responsibility": "mine",
+      "group": "blocked",
+      "evidence": {
+        "excerpt": "联调卡住了，要等对方把测试环境打开我才能继续。",
+        "sourceRef": "fixtures/transcripts/demo-standup.txt",
+        "recordingAt": "00:11:02"
+      }
+    },
+    {
+      "sourceId": "fixture-standup#00:12:18#other",
+      "action": "upsert",
+      "text": "由设计同事出图",
+      "responsibility": "other",
+      "evidence": {
+        "excerpt": "这张图由设计同事来出。",
+        "sourceRef": "fixtures/transcripts/demo-standup.txt",
+        "recordingAt": "00:12:18"
+      }
+    }
+  ]
+}

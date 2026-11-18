@@ -1,5 +1,6 @@
 const net = require('net');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 
 function isPrivateAddress(address) {
@@ -655,6 +656,177 @@ async function controlSodaMusic(action, dependencies = {}, currentPlaying = fals
   return { ok: true, running: true, playing, bootstrapped };
 }
 
+// 定制版不得写入官方 TO-DO Panel 的数据目录（macOS / Windows 都叫 Dynamic Panel）。
+function isOfficialPanelDataPath(candidate, appData) {
+  if (!candidate || !appData) return false;
+  const official = path.resolve(appData, 'Dynamic Panel');
+  let target;
+  try {
+    target = path.resolve(String(candidate));
+  } catch (error) {
+    return false;
+  }
+  return target === official || target.startsWith(official + path.sep);
+}
+
+function isBroadTranscriptFolder(folder, { home, appData, root } = {}) {
+  let resolved;
+  try {
+    resolved = path.resolve(String(folder || ''));
+  } catch (error) {
+    return true;
+  }
+  const filesystemRoot = root || path.parse(resolved).root;
+  if (resolved === path.resolve(filesystemRoot)) return true;
+  if (home && resolved === path.resolve(home)) return true;
+  if (appData && (resolved === path.resolve(appData) || isOfficialPanelDataPath(resolved, appData))) return true;
+  return false;
+}
+
+function writeAtomicFile(filePath, contents, mode = 0o600) {
+  const directory = path.dirname(filePath);
+  const base = path.basename(filePath);
+  if (!base || base === '.' || base === '..' || base !== path.basename(base)) return false;
+  const temporary = path.join(directory, `.${base}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(temporary, contents, { mode });
+    fs.renameSync(temporary, filePath);
+    return true;
+  } catch (error) {
+    try { fs.unlinkSync(temporary); } catch (unlinkError) {}
+    return false;
+  }
+}
+
+function backupWorkStateFile(backupDir, jsonText, now = new Date(), { appData } = {}) {
+  let dir;
+  try {
+    dir = path.resolve(String(backupDir || ''));
+  } catch (error) {
+    return { ok: false, error: 'backup_dir' };
+  }
+  if (appData && isOfficialPanelDataPath(dir, appData)) return { ok: false, error: 'official_data_dir' };
+  if (path.basename(dir) !== 'work-import-backups') return { ok: false, error: 'backup_dir' };
+  if (typeof jsonText !== 'string' || !jsonText.trim()) return { ok: false, error: 'empty' };
+  if (Buffer.byteLength(jsonText) > 4 * 1024 * 1024) return { ok: false, error: 'too_large' };
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    return { ok: false, error: 'json' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== 1 || !Array.isArray(parsed.tasks)) {
+    return { ok: false, error: 'schema' };
+  }
+  const date = now instanceof Date && Number.isFinite(now.getTime()) ? now : new Date();
+  const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const fileName = `notch-work-tasks-v1-${stamp}-${crypto.randomBytes(3).toString('hex')}.json`;
+  if (!writeAtomicFile(path.join(dir, fileName), jsonText)) return { ok: false, error: 'write' };
+  try {
+    const names = fs.readdirSync(dir)
+      .filter((name) => /^notch-work-tasks-v1-.*\.json$/.test(name) && !name.endsWith('.tmp'))
+      .map((name) => ({ name, mtime: fs.statSync(path.join(dir, name)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    names.slice(20).forEach((entry) => {
+      try { fs.unlinkSync(path.join(dir, entry.name)); } catch (error) {}
+    });
+  } catch (error) {}
+  return { ok: true, fileName };
+}
+
+const TRANSCRIPT_EXTENSIONS = new Set(['.txt', '.md', '.json', '.vtt', '.srt']);
+const BLOCKED_MEDIA_EXTENSIONS = new Set([
+  '.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.mp4', '.mov', '.mkv', '.webm', '.caf', '.aiff', '.aif',
+]);
+
+function listTranscriptFolder(folder, { appData, home, maxFiles = 200, maxBytes = 2 * 1024 * 1024 } = {}) {
+  let root;
+  try {
+    root = path.resolve(String(folder || ''));
+  } catch (error) {
+    return { ok: false, error: 'not_absolute' };
+  }
+  if (!path.isAbsolute(root)) return { ok: false, error: 'not_absolute' };
+  if (isBroadTranscriptFolder(root, { home, appData })) return { ok: false, error: 'folder_too_broad' };
+  if (appData && isOfficialPanelDataPath(root, appData)) return { ok: false, error: 'official_data_dir' };
+  let stat;
+  try {
+    stat = fs.lstatSync(root);
+  } catch (error) {
+    return { ok: false, error: 'unavailable' };
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) return { ok: false, error: 'not_directory' };
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync(root);
+  } catch (error) {
+    return { ok: false, error: 'unavailable' };
+  }
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (error) {
+    return { ok: false, error: 'unreadable' };
+  }
+  const files = [];
+  const skipped = [];
+  entries.forEach((entry) => {
+    const name = entry.name;
+    if (files.length >= maxFiles) {
+      skipped.push({ name: String(name).slice(0, 80), reason: 'limit' });
+      return;
+    }
+    if (!name || name.startsWith('.') || name !== path.basename(name)) {
+      skipped.push({ name: String(name || '').slice(0, 80), reason: 'hidden_or_unsafe' });
+      return;
+    }
+    const extension = path.extname(name).toLowerCase();
+    if (BLOCKED_MEDIA_EXTENSIONS.has(extension)) {
+      skipped.push({ name, reason: 'media_not_read' });
+      return;
+    }
+    if (!TRANSCRIPT_EXTENSIONS.has(extension)) {
+      skipped.push({ name, reason: 'extension' });
+      return;
+    }
+    const full = path.resolve(root, name);
+    if (!full.startsWith(realRoot + path.sep) && !full.startsWith(root + path.sep)) {
+      skipped.push({ name, reason: 'escape' });
+      return;
+    }
+    let fileStat;
+    try {
+      fileStat = fs.lstatSync(full);
+    } catch (error) {
+      skipped.push({ name, reason: 'unreadable' });
+      return;
+    }
+    if (fileStat.isSymbolicLink() || !fileStat.isFile()) {
+      skipped.push({ name, reason: 'not_regular_file' });
+      return;
+    }
+    let realFile;
+    try {
+      realFile = fs.realpathSync(full);
+    } catch (error) {
+      skipped.push({ name, reason: 'unreadable' });
+      return;
+    }
+    if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
+      skipped.push({ name, reason: 'escape' });
+      return;
+    }
+    if (fileStat.size > maxBytes) {
+      skipped.push({ name, reason: 'too_large' });
+      return;
+    }
+    files.push({ name, bytes: fileStat.size, modifiedAt: new Date(fileStat.mtimeMs).toISOString() });
+  });
+  files.sort((a, b) => a.name.localeCompare(b.name));
+  return { ok: true, folder: root, files, skipped: skipped.slice(0, 80) };
+}
+
 module.exports = {
   isPrivateAddress,
   decodeHtmlEntities,
@@ -689,4 +861,9 @@ module.exports = {
   updateDefaultTabPreference,
   sodaShortcutSpec,
   controlSodaMusic,
+  isOfficialPanelDataPath,
+  isBroadTranscriptFolder,
+  writeAtomicFile,
+  backupWorkStateFile,
+  listTranscriptFolder,
 };
