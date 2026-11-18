@@ -44,11 +44,21 @@ jobs:
           hdiutil verify "$dmg"
           shasum -a 256 "$dmg" | tee "dist.noindex/TO-DO-Panel-Work-${version}-arm64.dmg.sha256"
           echo "artifact=$(basename "$dmg")" >> "$GITHUB_STEP_SUMMARY"
+      - name: Pack local helper bundle
+        run: node scripts/pack-work-helper.js --zip helper-dist
       - uses: actions/upload-artifact@v4
         with:
           name: mac-arm64-installer
           path: |
             dist.noindex/*.dmg
             dist.noindex/*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-work-helper
+          path: |
+            helper-dist/*.zip
+            helper-dist/*.zip.sha256
           if-no-files-found: error
           retention-days: 14

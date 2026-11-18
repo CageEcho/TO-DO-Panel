@@ -176,7 +176,7 @@ mv ~/Library/Application\ Support/TO-DO\ Panel\ Work/todo-inbox/.agent.tmp \
 
 1. 录音仍只在你按下录音后开始，结束或退出时释放麦克风。工作导入不会自动开麦。
 2. 在本机把授权根目录写进不进仓库的 `work-source.local.json`（示例只有占位符 `<WORK_ROOT>`）。准备脚本会递归这个根目录里的文本和录音。
-3. 录音先由本机转写程序写成文字。没有本地转写程序时，清单写明 `local_transcriber_missing`，音频留在原处，不会上传，也不会改用别的模型。
+3. 录音由本机 faster-whisper 写成文字。Mac 上使用应用自带的 `work-helper`：`uv sync` 只下载 Python 包，第一次转写再把约 487 MB 的 `Systran/faster-whisper-small`（其中 `model.bin` 484 MB）下载到本机缓存。推理走 Apple Silicon 的 CPU int8，不上传音频。PATH 上的 `whisper-cli` 和 `whisper` 不会被当成两个位置参数调用。没有 uv、也没有这些程序时，清单写明 `local_transcriber_missing`。
 4. 把 `work-materials/text/` 里已经脱敏的文字交给这次 Grok 对话。助手按下面的契约写出 `grok-work/v1` JSON。当前没有接通 Grok API，也不能凭空调用。
 5. `scripts/grok-work-import.js` 校验后原子写入定制版自己的 `todo-inbox/`。应用运行时约 2 秒读取；关闭期间文件留在收件箱，下次打开再处理。
 
@@ -201,7 +201,7 @@ node scripts/work-source-prepare.js \
   --out "<本机私有目录>/work-materials"
 ```
 
-需要转写时再加 `--transcribe`。本地可执行文件来自 `TODO_PANEL_LOCAL_TRANSCRIBE`，或 PATH 上的 `whisper-cli` / `whisper`。程序约定是：第一个参数是音频路径，第二个参数是要写下的文本路径。它必须是本机程序，不能是云端地址。缺少这个程序时命令以状态码 2 退出，并在 `manifest.json` 里写下 `local_transcriber_missing`。
+需要转写时再加 `--transcribe`。默认使用应用或助手包里的 `uv run ... transcribe.py <音频> <文本>`。这个包装才接受两个位置参数。PATH 上的 `whisper-cli` 会改成 `-f <音频> -otxt -of <输出前缀>`，`whisper` 会改成 `--output_format txt --output_dir <目录>`。显式的 `TODO_PANEL_LOCAL_TRANSCRIBE` 只有在程序名不是 `whisper` 或 `whisper-cli` 时才按两个位置参数调用。云端地址会被拒绝。缺少 uv 和这些程序时，命令以状态码 2 退出，原因是 `local_transcriber_missing`。安装包内的说明在 `Contents/Resources/work-helper/README.md`。
 
 助手读取的最小材料是本机 `work-materials/manifest.json` 和 `work-materials/text/*.txt`。这些文字需要已经脱敏。助手不读取授权根目录，也没有 Grok API key。
 

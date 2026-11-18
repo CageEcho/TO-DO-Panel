@@ -27,6 +27,8 @@ website/public/product-captures/raw/
 !.env.example
 work-source.local.json
 work-materials/
+build/work-helper-stage/
+helper-dist/
 
 # Local portable toolchain
 .tools/

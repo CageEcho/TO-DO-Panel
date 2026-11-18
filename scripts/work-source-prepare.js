@@ -7,7 +7,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { prepareWorkMaterials, probeLocalTranscriber } = require('../main-services');
+const { prepareWorkMaterials } = require('../main-services');
+const {
+  selectTranscriber,
+  buildInvocation,
+  finalizeTranscriptionOutput,
+} = require('./transcribe-adapter');
 
 function readArgs(argv) {
   const args = { root: '', out: '', transcribe: false, maxAudioBytes: 32 * 1024 * 1024, watermark: [] };
@@ -43,6 +48,16 @@ function lookupLocal(names) {
   return '';
 }
 
+function resolveHelperRoot(scriptDir) {
+  const candidates = [
+    process.env.TODO_PANEL_HELPER_ROOT,
+    path.resolve(scriptDir, '../helpers/mac'),
+    path.resolve(scriptDir, '..'),
+    path.resolve(scriptDir, '../../work-helper'),
+  ].filter(Boolean);
+  return candidates.find((dir) => fs.existsSync(path.join(dir, 'transcribe', 'transcribe.py'))) || '';
+}
+
 function main() {
   const args = readArgs(process.argv.slice(2));
   if (args.error || !args.root || !args.out) {
@@ -52,16 +67,36 @@ function main() {
     process.exitCode = 2;
     return;
   }
-  const probe = probeLocalTranscriber({
+  const helperRoot = resolveHelperRoot(__dirname);
+  const selection = selectTranscriber({
     env: process.env,
-    lookup: (names) => lookupLocal(names),
+    lookup: (name) => lookupLocal([name]),
+    helperRoot,
   });
   let runner;
-  if (args.transcribe && probe.ok) {
-    const command = lookupLocal([process.env.TODO_PANEL_LOCAL_TRANSCRIBE, 'whisper-cli', 'whisper'].filter(Boolean));
+  if (args.transcribe && selection.ok && selection.kind === 'faster-whisper-uv') {
+    const synced = spawnSync(selection.command, ['sync', '--project', path.join(helperRoot, 'transcribe')], {
+      stdio: 'inherit',
+      timeout: 600000,
+    });
+    if (!synced || synced.status !== 0) {
+      console.error('transcriber_deps_unavailable');
+      process.exitCode = 2;
+      return;
+    }
+  }
+  if (args.transcribe && selection.ok) {
     runner = ({ input, output }) => {
-      const result = spawnSync(command, [input, output], { stdio: 'ignore', timeout: 120000 });
-      return { ok: result.status === 0 && fs.existsSync(output), reason: result.status === 0 ? '' : 'transcriber_failed' };
+      const invocation = buildInvocation(selection, input, output);
+      const result = spawnSync(invocation.command, invocation.args, {
+        stdio: 'ignore',
+        timeout: 120000,
+        env: { ...process.env, ...(invocation.env || {}) },
+      });
+      if (!result || result.status !== 0) return { ok: false, reason: 'transcriber_failed' };
+      return finalizeTranscriptionOutput(invocation, fs)
+        ? { ok: true }
+        : { ok: false, reason: 'transcript_missing' };
     };
   }
   const prepared = prepareWorkMaterials({
@@ -89,12 +124,12 @@ function main() {
     audioPending: prepared.manifest.files.filter((file) => file.kind === 'audio' && file.transcription && file.transcription.state !== 'ready' && file.transcription.state !== 'duplicate').length,
   };
   console.log(JSON.stringify(summary));
-  if (args.transcribe && !probe.ok) {
-    console.error(probe.reason);
+  if (args.transcribe && !selection.ok) {
+    console.error(selection.reason);
     process.exitCode = 2;
   }
 }
 
 if (require.main === module) main();
 
-module.exports = { readArgs, lookupLocal };
+module.exports = { readArgs, lookupLocal, resolveHelperRoot };

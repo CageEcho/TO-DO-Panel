@@ -8,6 +8,7 @@
   "scripts": {
     "test": "node scripts/test-desktop.js",
     "start": "electron .",
+    "prebuild": "node scripts/pack-work-helper.js",
     "build": "electron-builder --mac dmg --publish never",
     "build:win": "electron-builder --win nsis --x64 --publish never",
     "build:zip": "electron-builder --mac zip",
@@ -34,6 +35,12 @@
       "buildResources": "build"
     },
     "afterPack": "./build/afterPack.js",
+    "extraResources": [
+      {
+        "from": "build/work-helper-stage",
+        "to": "work-helper"
+      }
+    ],
     "files": [
       "main.js",
       "main-services.js",
@@ -50,6 +57,10 @@
       "scripts/grok-work-import.js",
       "scripts/grok-work-schedule.js",
       "scripts/grok-work-adapter.js",
+      "scripts/work-source-prepare.js",
+      "scripts/transcribe-adapter.js",
+      "scripts/pack-work-helper.js",
+      "helpers/mac/**/*",
       "package.json",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
