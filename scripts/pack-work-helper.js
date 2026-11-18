@@ -19,6 +19,7 @@ const copies = [
   ['scripts/grok-work-adapter.js', 'scripts/grok-work-adapter.js'],
   ['helpers/mac/README.md', 'README.md'],
   ['helpers/mac/transcribe/pyproject.toml', 'transcribe/pyproject.toml'],
+  ['helpers/mac/transcribe/uv.lock', 'transcribe/uv.lock'],
   ['helpers/mac/transcribe/transcribe.py', 'transcribe/transcribe.py'],
 ];
 

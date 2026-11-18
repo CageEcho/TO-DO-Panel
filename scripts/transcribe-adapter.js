@@ -48,6 +48,30 @@ function selectTranscriber({ env = {}, lookup = () => '', helperRoot = '' } = {}
   return { ok: false, reason: 'local_transcriber_missing' };
 }
 
+function privateRuntimeRoot({ env = {}, home = '', platform = 'darwin', privateRuntime = '' } = {}) {
+  if (privateRuntime) return privateRuntime;
+  if (env.TODO_PANEL_PRIVATE_RUNTIME) return env.TODO_PANEL_PRIVATE_RUNTIME;
+  if (platform === 'win32') return path.join(env.APPDATA || home, 'TO-DO Panel Work', 'local-transcribe');
+  if (platform === 'linux') return path.join(home, '.local', 'share', 'to-do-panel-work', 'local-transcribe');
+  return path.join(home, 'Library', 'Application Support', 'TO-DO Panel Work', 'local-transcribe');
+}
+
+function fasterWhisperRuntimeEnv(runtime, inherited = {}) {
+  const env = {
+    UV_PROJECT_ENVIRONMENT: path.join(runtime, 'venv'),
+    UV_CACHE_DIR: path.join(runtime, 'uv-cache'),
+    PYTHONDONTWRITEBYTECODE: '1',
+    PYTHONPYCACHEPREFIX: path.join(runtime, 'pyc'),
+    HF_HUB_DISABLE_TELEMETRY: '1',
+    HF_HUB_ENABLE_HF_TRANSFER: '0',
+  };
+  if (!inherited.HF_HOME) {
+    env.HF_HOME = path.join(runtime, 'model-cache');
+    env.HUGGINGFACE_HUB_CACHE = path.join(runtime, 'model-cache', 'hub');
+  }
+  return env;
+}
+
 function buildInvocation(selection, input, output, options = {}) {
   if (!selection || selection.ok !== true) return null;
   const model = options.model || 'small';
@@ -77,10 +101,11 @@ function buildInvocation(selection, input, output, options = {}) {
   }
   if (selection.kind === 'faster-whisper-uv') {
     const project = path.join(selection.helperRoot, 'transcribe');
+    const runtime = privateRuntimeRoot(options);
     return {
       command: selection.command,
       args: [
-        'run', '--project', project,
+        'run', '--frozen', '--project', project,
         'python', path.join(project, 'transcribe.py'),
         input, output,
         '--model', model,
@@ -90,10 +115,8 @@ function buildInvocation(selection, input, output, options = {}) {
       output,
       produced: output,
       kind: selection.kind,
-      env: {
-        HF_HUB_DISABLE_TELEMETRY: '1',
-        HF_HUB_ENABLE_HF_TRANSFER: '0',
-      },
+      runtime,
+      env: fasterWhisperRuntimeEnv(runtime, options.env || {}),
     };
   }
   return {
@@ -119,6 +142,7 @@ function finalizeTranscriptionOutput(invocation, fsImpl) {
 
 module.exports = {
   selectTranscriber,
+  privateRuntimeRoot,
   buildInvocation,
   kindForCommand,
   isTwoPositionalContract,

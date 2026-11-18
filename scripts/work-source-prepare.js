@@ -5,6 +5,7 @@
 // 不读取其他目录，不上传音频。没有本地转写程序时只报告原因。
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { prepareWorkMaterials } = require('../main-services');
@@ -74,10 +75,21 @@ function main() {
     helperRoot,
   });
   let runner;
+  const invocationOptions = {
+    env: process.env,
+    home: os.homedir(),
+    platform: process.platform,
+    model: process.env.TODO_PANEL_WHISPER_MODEL || 'small',
+  };
   if (args.transcribe && selection.ok && selection.kind === 'faster-whisper-uv') {
-    const synced = spawnSync(selection.command, ['sync', '--project', path.join(helperRoot, 'transcribe')], {
+    const runtimeEnv = {
+      ...process.env,
+      ...(buildInvocation(selection, 'sample.wav', 'sample.txt', invocationOptions).env || {}),
+    };
+    const synced = spawnSync(selection.command, ['sync', '--frozen', '--project', path.join(helperRoot, 'transcribe')], {
       stdio: 'inherit',
       timeout: 600000,
+      env: runtimeEnv,
     });
     if (!synced || synced.status !== 0) {
       console.error('transcriber_deps_unavailable');
@@ -87,7 +99,7 @@ function main() {
   }
   if (args.transcribe && selection.ok) {
     runner = ({ input, output }) => {
-      const invocation = buildInvocation(selection, input, output);
+      const invocation = buildInvocation(selection, input, output, invocationOptions);
       const result = spawnSync(invocation.command, invocation.args, {
         stdio: 'ignore',
         timeout: 120000,

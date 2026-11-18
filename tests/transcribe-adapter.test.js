@@ -55,13 +55,21 @@ test('uv faster-whisper is selected when whisper is absent and uses the two-path
   assert.equal(selected.reason, 'faster_whisper_uv');
   const plan = buildInvocation(selected, '/tmp/clip.m4a', '/tmp/out/clip.txt');
   assert.equal(plan.command, '/usr/bin/uv');
-  assert.deepEqual(plan.args.slice(0, 5), [
-    'run', '--project', path.join(helper, 'transcribe'), 'python', path.join(helper, 'transcribe', 'transcribe.py'),
+  assert.deepEqual(plan.args.slice(0, 6), [
+    'run', '--frozen', '--project', path.join(helper, 'transcribe'), 'python', path.join(helper, 'transcribe', 'transcribe.py'),
   ]);
-  assert.deepEqual(plan.args.slice(5), [
+  assert.deepEqual(plan.args.slice(6), [
     '/tmp/clip.m4a', '/tmp/out/clip.txt', '--model', 'small', '--device', 'cpu', '--compute-type', 'int8',
   ]);
   assert.equal(plan.env.HF_HUB_DISABLE_TELEMETRY, '1');
+  assert.equal(plan.env.UV_PROJECT_ENVIRONMENT.includes(`${path.sep}Applications${path.sep}`), false);
+  assert.match(plan.env.UV_PROJECT_ENVIRONMENT, /local-transcribe[/\\]venv$/);
+  const kept = buildInvocation(selected, '/tmp/clip.m4a', '/tmp/out/clip.txt', {
+    home: '/Users/example',
+    platform: 'darwin',
+    env: { HF_HOME: '/Users/example/.cache/huggingface' },
+  });
+  assert.equal(kept.env.HF_HOME, undefined);
   assert.equal(selectTranscriber({
     env: { TODO_PANEL_LOCAL_TRANSCRIBE: 'https://dashscope.aliyuncs.com/asr' },
     lookup: () => '/usr/bin/uv',
@@ -92,6 +100,16 @@ test('an explicit two-arg wrapper stays two-arg and native output files are move
   assert.equal(fs.readFileSync(wanted, 'utf8'), 'synthetic transcript\n');
   assert.equal(fs.existsSync(produced), false);
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('uv.lock pins PyAV 18.1.0 so faster-whisper 1.2.1 can open audio', () => {
+  const lock = fs.readFileSync(path.join(helper, 'transcribe', 'uv.lock'), 'utf8');
+  const av = lock.split('\n\n').find((block) => block.startsWith('[[package]]\nname = "av"') || block.includes('\nname = "av"\n'));
+  assert.match(av, /version = "18\.1\.0"/);
+  assert.equal(/version = "19\./.test(av), false);
+  const project = fs.readFileSync(path.join(helper, 'transcribe', 'pyproject.toml'), 'utf8');
+  assert.match(project, /faster-whisper==1\.2\.1/);
+  assert.match(project, /av==18\.1\.0/);
 });
 
 test('helper stage contains the adapter, import CLI, and checksums without model weights', () => {

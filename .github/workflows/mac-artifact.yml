@@ -20,7 +20,7 @@ jobs:
   mac:
     name: Build Apple Silicon DMG artifact
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,6 +30,16 @@ jobs:
       - run: npm ci
       - name: Unit tests
         run: node --test tests/*.test.js
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.9"
+      - name: Synthetic speech transcription smoke
+        env:
+          TODO_PANEL_PRIVATE_RUNTIME: ${{ runner.temp }}/local-transcribe
+          TODO_PANEL_WHISPER_MODEL: tiny
+          HF_HUB_DISABLE_TELEMETRY: "1"
+        run: node scripts/transcribe-smoke.js
       - name: Build unsigned arm64 DMG
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
