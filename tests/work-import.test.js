@@ -24,6 +24,12 @@ const {
   assessGrokAdapter,
   activeWorkTasks,
   publicWorkSchedule,
+  workBoardLayout,
+  workDeadlinePresentation,
+  createManualWorkTask,
+  normalizeWorkState,
+  resolveTodoSubview,
+  workTaskSourceLabel,
 } = require('../renderer/work-domain');
 const {
   isOfficialPanelDataPath,
@@ -420,6 +426,69 @@ test('schedule script and adapter do not claim a model call', () => {
   const plist = fs.readFileSync(path.join(root, 'scripts/launchd/com.cageecho.todo-panel-work.plist.example'), 'utf8');
   assert.match(plist, /<key>Disabled<\/key>\s*<true\/>/);
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('work board keeps review groups off the four cards and does not invent a deadline', () => {
+  const fresh = createEmptyWorkState();
+  assert.deepEqual(workBoardLayout(fresh).slots.map((slot) => slot.panes.map((group) => group.id)), [
+    ['today', 'weekly'],
+    ['media'],
+    ['vibe'],
+    ['desk'],
+  ]);
+  assert.deepEqual(workBoardLayout(fresh).review.map((group) => group.id), ['confirm', 'blocked']);
+  const legacy = normalizeWorkState({ ...fresh, groups: fresh.groups.map((group) => group.id === 'today' ? { ...group, name: '今日工作' } : group) });
+  assert.equal(legacy.groups.find((group) => group.id === 'today').name, '每日工作');
+  const renamed = normalizeWorkState({ ...fresh, groups: fresh.groups.map((group) => group.id === 'today' ? { ...group, name: '我的每日' } : group) });
+  assert.equal(renamed.groups.find((group) => group.id === 'today').name, '我的每日');
+  const uncertain = mergeWorkImport(fresh, payload([mineTask({
+    sourceId: 'uncertain-media',
+    responsibility: 'uncertain',
+    group: 'media',
+  })]), { now: NOW });
+  assert.equal(uncertain.state.tasks[0].groupId, 'confirm');
+  assert.equal(uncertain.state.tasks[0].responsibility, 'uncertain');
+  assert.equal(workDeadlinePresentation(uncertain.state.tasks[0], NOW).known, false);
+  assert.equal(workDeadlinePresentation(uncertain.state.tasks[0], NOW).percent, undefined);
+  const moved = editWorkTask(uncertain.state, uncertain.state.tasks[0].id, { groupId: 'today' }, NOW + 5);
+  assert.equal(moved.task.groupId, 'today');
+  assert.equal(moved.task.responsibility, 'uncertain');
+  const manual = createManualWorkTask(fresh, { text: '手工但没有截止日期', groupId: 'desk' }, NOW);
+  assert.equal(manual.state.tasks.at(-1).deadline, null);
+});
+
+test('startup opens work even if classic was remembered, and manual tasks survive sync and reload', () => {
+  assert.equal(resolveTodoSubview('startup'), 'work');
+  assert.equal(resolveTodoSubview('restart'), 'work');
+  assert.equal(resolveTodoSubview('enter-todo'), 'work');
+  assert.equal(resolveTodoSubview('classic'), 'classic');
+  const manual = createManualWorkTask(createEmptyWorkState(), { text: '我亲手记的', groupId: 'desk' }, NOW);
+  const hand = manual.state.tasks[0];
+  assert.equal(hand.evidence.excerpt, '');
+  assert.equal(hand.evidence.sourceRef, '');
+  assert.equal(workTaskSourceLabel(hand), '手动');
+  const mixed = mergeWorkImport(manual.state, payload([mineTask()]), { now: NOW + 1 });
+  assert.deepEqual(activeWorkTasks(mixed.state).map((task) => task.origin).sort(), ['import', 'manual']);
+  const attack = mergeWorkImport(mixed.state, payload([mineTask({
+    sourceId: hand.sourceId,
+    text: '想覆盖手工标题',
+    revision: 4,
+    deadline: '2026-11-20T09:00:00+08:00',
+  })]), { now: NOW + 2, fileHash: 'f'.repeat(64) });
+  const kept = attack.state.tasks.find((task) => task.sourceId === hand.sourceId);
+  assert.equal(kept.text, '我亲手记的');
+  assert.equal(kept.deadline, null);
+  assert.equal(kept.revokeRequested, false);
+  const revoked = mergeWorkImport(attack.state, payload([{
+    sourceId: hand.sourceId,
+    action: 'revoke',
+    revision: 5,
+  }]), { now: NOW + 3, fileHash: '9'.repeat(64) });
+  assert.equal(activeWorkTasks(revoked.state).some((task) => task.sourceId === hand.sourceId && task.text === '我亲手记的'), true);
+  const reloaded = normalizeWorkState(JSON.parse(JSON.stringify(revoked.state)));
+  assert.equal(reloaded.tasks.find((task) => task.sourceId === hand.sourceId).text, '我亲手记的');
+  assert.equal(activeWorkTasks(reloaded).some((task) => task.sourceId === mineTask().sourceId), true);
+  assert.equal(resolveTodoSubview('restart'), 'work');
 });
 
 test('custom groups can be renamed and removed only when empty', () => {

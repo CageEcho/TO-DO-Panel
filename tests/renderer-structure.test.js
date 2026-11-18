@@ -15,7 +15,13 @@ test('clipboard rows define both favorite icons before rendering entries', () =>
 
 test('todo page keeps the classic matrix and adds a separate work view', () => {
   assert.match(html, /id="todo-classic-view"/);
+  assert.match(html, /id="todo-view-work"[\s\S]*id="todo-view-classic"/);
   assert.match(html, /id="todo-work-view"/);
+  assert.equal(html.includes('把 grok-work/v1 JSON 放进'), false);
+  assert.match(html, /id="work-board"/);
+  assert.match(html, /id="settings-ticnote-card"/);
+  assert.match(html, /id="settings-grok-card"/);
+  assert.equal(html.includes('周一15:00'), false);
   assert.match(html, /id="work-source-enabled"/);
   assert.match(html, /src="work-domain\.js"/);
   assert.match(appJs, /routeTodoInboxPayload/);

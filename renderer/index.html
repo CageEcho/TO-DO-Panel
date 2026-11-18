@@ -227,10 +227,10 @@
 
           <section id="tab-todo" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-todo" aria-hidden="true" inert>
             <div class="todo-view-switch" role="tablist" aria-label="待办视图">
-              <button id="todo-view-classic" type="button" role="tab" aria-selected="true" aria-controls="todo-classic-view">分类待办</button>
-              <button id="todo-view-work" type="button" role="tab" aria-selected="false" aria-controls="todo-work-view">工作</button>
+              <button id="todo-view-work" type="button" role="tab" aria-selected="true" aria-controls="todo-work-view">工作</button>
+              <button id="todo-view-classic" type="button" role="tab" aria-selected="false" aria-controls="todo-classic-view">分类待办</button>
             </div>
-            <div class="sections" id="todo-classic-view">
+            <div class="sections" id="todo-classic-view" hidden>
               <section class="quadrant tile" data-priority="P0">
                 <div class="quadrant-header">
                   <span class="dot dot-p0"></span>
@@ -311,15 +311,33 @@
                 </div>
               </section>
             </div>
-            <div class="work-view" id="todo-work-view" hidden>
-              <div class="work-toolbar">
+            <div class="work-view" id="todo-work-view">
+              <div class="work-review-rail">
                 <p id="work-status">工作待办还没有导入。</p>
+                <div class="work-review-actions" id="work-review-actions"></div>
                 <label class="work-new-group">
                   <span>新分组</span>
                   <input id="work-new-group" type="text" maxlength="24" placeholder="添加分组，回车保存" aria-label="添加工作分组" />
                 </label>
               </div>
-              <div class="work-columns" id="work-columns"></div>
+              <div class="work-board" id="work-board"></div>
+              <div class="work-drawer" id="work-drawer" hidden></div>
+              <div class="todo-date-popover work-date-popover" id="work-date-popover" hidden>
+                <section class="todo-editor-card" role="group" aria-label="工作待办截止时间">
+                  <header class="todo-calendar-head">
+                    <button id="work-calendar-previous" type="button" aria-label="上个月">‹</button>
+                    <span id="work-calendar-month"></span>
+                    <button id="work-calendar-next" type="button" aria-label="下个月">›</button>
+                  </header>
+                  <div class="todo-calendar-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+                  <div class="todo-calendar-grid" id="work-calendar-grid"></div>
+                  <div class="todo-time-row">
+                    <button id="work-calendar-clear" type="button">不设置</button>
+                    <select id="work-calendar-hour" aria-label="小时"></select>
+                    <select id="work-calendar-minute" aria-label="分钟"></select>
+                  </div>
+                </section>
+              </div>
             </div>
           </section>
 
@@ -488,7 +506,48 @@
                     <input id="work-schedule-enabled" type="checkbox" aria-label="启用每日检查" />
                     <i aria-hidden="true"></i>
                   </label>
-                  <p class="settings-inline-note" id="work-settings-note">目标是每个工作日 09:00 前准备好。提前量默认 60 分钟，也就是 08:00 开始。自动检查保持关闭，直到这台电脑完成一次端到端验收。采集默认关闭，会递归授权根目录里的文本和录音，但不会上传音频，也不会把聊天当成 Grok API。</p>
+                  <p class="settings-inline-note" id="work-settings-note">日常在工作页直接输入即可，不用写 JSON。grok-work/v1 只留给以后的自动导入。目标仍是每个工作日 09:00 前准备好，提前量默认 60 分钟。自动检查保持关闭。本机只递归已授权的桌面文件夹；TicNote 只在你之后指定的工作文件夹里读取获准录音，不会扩大到其他目录或飞书。</p>
+                </section>
+
+                <section class="tile settings-card" id="settings-ticnote-card">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">TicNote</span><strong>只读录音来源</strong></div>
+                    <small id="ticnote-status-label">未连接</small>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>国内正式 AppKey</span><strong>只保存在本机加密存储</strong></div>
+                    <input id="ticnote-appkey" type="password" maxlength="240" autocomplete="off" spellcheck="false" aria-label="TicNote AppKey" placeholder="tncn_sk_…" />
+                  </label>
+                  <div class="settings-device-row">
+                    <div><span>连接</span><strong id="ticnote-connection">尚未验证</strong></div>
+                    <span class="settings-device-actions">
+                      <button id="ticnote-save" type="button">保存密钥</button>
+                      <button id="ticnote-verify" type="button">验证并读取项目</button>
+                      <button id="ticnote-clear" type="button">清除</button>
+                    </span>
+                  </div>
+                  <div class="ticnote-picker" id="ticnote-projects"></div>
+                  <div class="ticnote-picker" id="ticnote-folders"></div>
+                  <p class="settings-inline-note">密钥在 https://www.ticnote.cn 账户设置里创建。这里只连接 voice-api.ticnote.cn，不使用海外或测试环境。验证时只读取项目名称和文件数。勾选项目后才能看到该项目的文件夹；勾选文件夹才允许读取其中直接包含的已有转写。父文件夹不包含子文件夹，同名文件夹也不会被自动选中。未选择文件夹时不取正文、音频或转写。保存选择后，每日任务仍然关闭。</p>
+                </section>
+
+                <section class="tile settings-card" id="settings-grok-card">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">Grok API</span><strong>独立于 TicNote</strong></div>
+                    <small>调用关闭</small>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>xAI API Key</span><strong id="grok-model-label">模型 grok-4，按 token 计费</strong></div>
+                    <input id="grok-api-key" type="password" maxlength="300" autocomplete="off" spellcheck="false" aria-label="Grok API Key" placeholder="留空则不保存" />
+                  </label>
+                  <div class="settings-device-row">
+                    <div><span>请求</span><strong id="grok-call-status">未配置，不会访问 api.x.ai</strong></div>
+                    <span class="settings-device-actions">
+                      <button id="grok-save" type="button">保存密钥</button>
+                      <button id="grok-clear" type="button">清除</button>
+                    </span>
+                  </div>
+                  <p class="settings-inline-note">这把密钥和当前聊天订阅不是一回事，也和 TicNote 的 AppKey 分开存放。本版本即使保存了密钥也不会发送模型请求，不会换成其他供应商，也不会把 TicNote 转写上传到 xAI。缺密钥时保持关闭。</p>
                 </section>
 
                 <section class="tile settings-card settings-home-modules-card">

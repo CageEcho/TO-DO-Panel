@@ -19,6 +19,7 @@ const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const dns = require('dns');
 const zlib = require('zlib');
 const crypto = require('crypto');
@@ -63,6 +64,7 @@ const {
   createForegroundMediaPermissionCoordinator,
 } = require('./main-services');
 const { publicWorkSchedule } = require('./renderer/work-domain');
+const { createTicnoteSession, createGrokConfig, CHINA_ORIGIN } = require('./main/ticnote');
 const { createAgentUsageMonitor } = require('./main/agent-usage');
 const { createNotchGeometry } = require('./main/notch-geometry');
 const { createMusicPlayers, normalizeMusicPreference } = require('./main/music-players');
@@ -866,6 +868,7 @@ function sendIslandUsage() {
   islandWindow.webContents.send('island:usage', {
     tools: islandTools(),
     updatedAt: usageSnapshot.updatedAt,
+    ticnote: safeTicnoteStatus(),
   });
 }
 
@@ -2013,6 +2016,138 @@ ipcMain.handle('work:choose-transcript-folder', async (event) => {
 ipcMain.handle('work:list-transcripts', (event, folder) => {
   if (!isMainWindowSender(event) || typeof folder !== 'string') return { ok: false, error: 'sender' };
   return listTranscriptFolder(folder, { appData: OFFICIAL_APP_DATA, home: app.getPath('home') });
+});
+
+function readPrivateJson(name) {
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), name), 'utf8'));
+    return value && typeof value === 'object' ? value : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function writePrivateJson(name, value) {
+  const file = path.join(app.getPath('userData'), name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const text = JSON.stringify(value);
+  if (/tncn_sk_|tnovs_sk_|Bearer\s+[A-Za-z0-9._~+/-]{8,}/.test(text)) return;
+  fs.writeFileSync(file, text, { mode: 0o600 });
+}
+
+function ticnoteTransport(request) {
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL(request.url); } catch (error) { resolve({ status: 0, body: '' }); return; }
+    if (url.origin !== CHINA_ORIGIN) { resolve({ status: 0, body: '' }); return; }
+    const req = https.request({
+      hostname: url.hostname,
+      path: `${url.pathname}${url.search}`,
+      method: request.method || 'GET',
+      headers: request.headers,
+      timeout: 15000,
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 1500000) chunks.push(chunk);
+      });
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: { location: res.headers.location || '' },
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: '' }); });
+    if (request.body) req.write(request.body);
+    req.end();
+  });
+}
+
+let ticnoteApi = null;
+let grokApi = null;
+
+function ticnoteService() {
+  if (!ticnoteApi) {
+    ticnoteApi = createTicnoteSession({
+      load: () => readPrivateJson('ticnote-connection.json'),
+      save: (value) => writePrivateJson('ticnote-connection.json', value),
+      encrypt: (value) => (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value).toString('base64') : ''),
+      decrypt: (value) => decryptStoredSecret(value),
+      transport: ticnoteTransport,
+      log: (line) => console.log(String(line).slice(0, 240)),
+    });
+  }
+  return ticnoteApi;
+}
+
+function grokService() {
+  if (!grokApi) {
+    grokApi = createGrokConfig({
+      load: () => readPrivateJson('grok-connection.json'),
+      save: (value) => writePrivateJson('grok-connection.json', value),
+      encrypt: (value) => (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value).toString('base64') : ''),
+      decrypt: (value) => decryptStoredSecret(value),
+      log: (line) => console.log(String(line).slice(0, 240)),
+    });
+  }
+  return grokApi;
+}
+
+function safeTicnoteStatus() {
+  try {
+    if (!app.isReady()) return { configured: false, folderCount: 0, scheduleEnabled: false, dailyTasksEnabled: false };
+    return ticnoteService().status();
+  } catch (error) {
+    return { configured: false, folderCount: 0, scheduleEnabled: false, dailyTasksEnabled: false };
+  }
+}
+
+ipcMain.handle('ticnote:status', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return { ok: true, status: ticnoteService().status() };
+});
+ipcMain.handle('ticnote:save-key', (event, appkey) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = ticnoteService().saveKey(typeof appkey === 'string' ? appkey : '');
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('ticnote:clear-key', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = ticnoteService().clearKey();
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('ticnote:verify', async (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = await ticnoteService().verify();
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('ticnote:save-scope', (event, scope) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = ticnoteService().saveScope(scope);
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('ticnote:list-folders', async (event, projectId) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return ticnoteService().listFolders(projectId);
+});
+ipcMain.handle('grok:status', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return { ok: true, status: grokService().status() };
+});
+ipcMain.handle('grok:save-key', (event, apiKey) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return grokService().saveKey(typeof apiKey === 'string' ? apiKey : '');
+});
+ipcMain.handle('grok:clear-key', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return grokService().clearKey();
 });
 
 function getLayoutMetrics(display) {

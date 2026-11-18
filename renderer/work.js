@@ -11,6 +11,12 @@
     minute: '2-digit',
   });
   let state = loadState();
+  const PANE_KEY = 'notch-work-board-pane-v1';
+  let pane = 'today';
+  let drawerGroup = '';
+  const drafts = new Map();
+  let calendar = null;
+  try { pane = localStorage.getItem(PANE_KEY) === 'weekly' ? 'weekly' : 'today'; } catch (error) {}
 
   function loadState() {
     try {
@@ -60,87 +66,211 @@
     if (note && message) note.textContent = message;
   }
 
+  function pendingCount(groupId) {
+    return domain.activeWorkTasks(state).filter((task) => task.groupId === groupId && !task.done).length;
+  }
+
+  function tasksIn(groupId) {
+    return domain.activeWorkTasks(state).filter((task) => task.groupId === groupId);
+  }
+
+  function formatDue(iso) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: domain.WORK_TIMEZONE,
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(iso));
+    const read = (type) => parts.find((part) => part.type === type)?.value || '';
+    const hour = read('hour') === '24' ? '00' : read('hour');
+    return `${read('month')}/${read('day')} ${hour}:${read('minute')}`;
+  }
+
+  function composerLabel(groupId) {
+    const deadline = drafts.get(groupId);
+    if (!deadline) return '未设置';
+    return new Intl.DateTimeFormat('zh-CN', {
+      day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(deadline));
+  }
+
+  function ensureDraft(groupId) {
+    if (drafts.has(groupId)) return drafts.get(groupId);
+    const deadline = window.NotchDomain && window.NotchDomain.defaultTodoDeadline
+      ? window.NotchDomain.defaultTodoDeadline(new Date())
+      : null;
+    drafts.set(groupId, deadline);
+    return deadline;
+  }
+
+  function renameGroup(group, input) {
+    const renamed = domain.renameWorkGroup(state, group.id, input.value);
+    if (!renamed.ok || !saveState(renamed.state)) input.value = group.name;
+    else render();
+  }
+
   function render() {
-    const columns = document.getElementById('work-columns');
+    const board = document.getElementById('work-board');
     const status = document.getElementById('work-status');
-    if (!columns) return;
-    columns.replaceChildren();
+    const rail = document.getElementById('work-review-actions');
+    if (!board) return;
+    const layout = domain.workBoardLayout(state);
     const active = domain.activeWorkTasks(state);
     if (status) {
-      const pending = state.schedule.pendingDate
-        ? `${state.schedule.pendingDate} 的整理结果还没提交。应用关闭、关机或睡眠时不会生成待办。`
-        : '把 grok-work/v1 JSON 放进本应用的 todo-inbox。没有依据的事项不会出现在这里。';
       status.textContent = active.length
-        ? `工作待办 ${active.length} 条。${pending}`
-        : pending;
+        ? '可以直接改、勾选或删除。上方可以打开待确认和阻塞。'
+        : '还没有工作待办。在卡片下方输入，回车就会留下。';
     }
-    state.groups.forEach((group) => {
-      const column = document.createElement('section');
-      column.className = 'work-column tile';
-      column.dataset.group = group.id;
-      const header = document.createElement('div');
-      header.className = 'work-column-head';
-      const name = document.createElement('input');
-      name.className = 'work-group-name';
-      name.value = group.name;
-      name.maxLength = 24;
-      name.setAttribute('aria-label', `修改${group.name}名称`);
-      name.addEventListener('change', () => {
-        const renamed = domain.renameWorkGroup(state, group.id, name.value);
-        if (!renamed.ok || !saveState(renamed.state)) name.value = group.name;
-        else render();
-      });
-      const count = document.createElement('span');
-      count.className = 'count';
-      const tasks = active.filter((task) => task.groupId === group.id);
-      count.textContent = String(tasks.length);
-      header.append(name, count);
-      if (!group.system) {
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'work-group-remove';
-        remove.textContent = '移除';
-        remove.addEventListener('click', () => {
-          const removed = domain.removeWorkGroup(state, group.id);
-          if (!removed.ok) {
-            setNote(removed.error === 'group_not_empty' ? '分组里还有待办，不能移除。' : '这个分组不能移除。');
-            return;
-          }
-          if (saveState(removed.state)) render();
+    if (rail) {
+      rail.replaceChildren();
+      [...layout.review, ...layout.custom].forEach((group) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'work-review-chip';
+        button.setAttribute('aria-pressed', drawerGroup === group.id ? 'true' : 'false');
+        button.textContent = `${group.name} ${pendingCount(group.id)}`;
+        button.addEventListener('click', () => {
+          drawerGroup = drawerGroup === group.id ? '' : group.id;
+          render();
         });
-        header.append(remove);
-      }
-      const list = document.createElement('div');
-      list.className = 'work-task-list';
-      tasks.forEach((task) => list.append(renderTask(task)));
-      const add = document.createElement('input');
-      add.className = 'work-add';
-      add.type = 'text';
-      add.maxLength = 200;
-      add.placeholder = '添加一条，回车保存';
-      add.setAttribute('aria-label', `在${group.name}添加待办`);
-      add.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
-        const created = domain.createManualWorkTask(state, { text: add.value, groupId: group.id }, Date.now());
-        if (!created.ok || !saveState(created.state)) return;
-        render();
+        rail.append(button);
+        if (!group.system) {
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'work-group-remove';
+          remove.textContent = '移除';
+          remove.addEventListener('click', () => {
+            const removed = domain.removeWorkGroup(state, group.id);
+            if (!removed.ok) {
+              setNote(removed.error === 'group_not_empty' ? '分组里还有待办，不能移除。' : '这个分组不能移除。');
+              return;
+            }
+            if (drawerGroup === group.id) drawerGroup = '';
+            if (saveState(removed.state)) render();
+          });
+          rail.append(remove);
+        }
       });
-      column.append(header, list, add);
-      columns.append(column);
-    });
+    }
+    board.replaceChildren();
+    layout.slots.forEach((slot) => board.append(renderCard(slot)));
+    renderDrawer(layout);
     syncSettingsForm();
   }
 
-  function renderTask(task) {
-    const card = document.createElement('article');
-    card.className = 'work-task';
-    card.dataset.sourceId = task.sourceId;
-    if (task.groupId === 'today') card.dataset.emphasis = 'today';
+  function renderCard(slot) {
+    const section = document.createElement('section');
+    section.className = 'quadrant tile work-card';
+    section.dataset.workSlot = slot.slot;
+    const header = document.createElement('div');
+    header.className = 'quadrant-header';
+    let group = slot.panes[0];
+    if (slot.slot === 'cadence') {
+      const switcher = document.createElement('div');
+      switcher.className = 'work-cadence';
+      switcher.setAttribute('role', 'tablist');
+      slot.panes.forEach((item) => {
+        const tab = document.createElement('div');
+        tab.className = 'work-cadence-tab';
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', item.id === pane ? 'true' : 'false');
+        const name = document.createElement('input');
+        name.className = 'todo-category-name';
+        name.value = item.name;
+        name.maxLength = 24;
+        name.setAttribute('aria-label', `修改${item.name}名称`);
+        name.addEventListener('change', () => renameGroup(item, name));
+        name.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+        });
+        const count = document.createElement('span');
+        count.className = 'count';
+        count.textContent = String(pendingCount(item.id));
+        tab.append(name, count);
+        tab.addEventListener('click', (event) => {
+          if (event.target === name || pane === item.id) return;
+          pane = item.id;
+          try { localStorage.setItem(PANE_KEY, pane); } catch (error) {}
+          render();
+        });
+        switcher.append(tab);
+      });
+      header.append(switcher);
+      group = slot.panes.find((item) => item.id === pane) || group;
+    } else if (group) {
+      const dot = document.createElement('span');
+      dot.className = `dot dot-${slot.dot}`;
+      const name = document.createElement('input');
+      name.className = 'todo-category-name';
+      name.value = group.name;
+      name.maxLength = 24;
+      name.setAttribute('aria-label', `修改${group.name}名称`);
+      name.addEventListener('change', () => renameGroup(group, name));
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = String(pendingCount(group.id));
+      header.append(dot, name, count);
+    }
+    const list = document.createElement('ul');
+    list.className = 'todo-list';
+    const tasks = group ? tasksIn(group.id) : [];
+    if (!tasks.length && group) {
+      const empty = document.createElement('li');
+      empty.className = 'work-empty';
+      empty.textContent = group.id === 'weekly' ? '本周还没有周报' : '在下方输入，回车保存';
+      list.append(empty);
+    }
+    tasks.forEach((task) => list.append(renderTask(task)));
+    section.append(header, list);
+    if (group) section.append(renderComposer(group));
+    return section;
+  }
+
+  function renderComposer(group) {
     const row = document.createElement('div');
-    row.className = 'work-task-row';
+    row.className = 'add-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 200;
+    input.placeholder = '添加待办，回车保存…';
+    input.setAttribute('aria-label', `在${group.name}添加待办`);
+    input.addEventListener('focus', () => ensureDraft(group.id));
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+      const deadline = drafts.has(group.id) ? drafts.get(group.id) : ensureDraft(group.id);
+      const created = domain.createManualWorkTask(state, {
+        text: input.value,
+        groupId: group.id,
+        deadline,
+      }, Date.now());
+      if (!created.ok || !saveState(created.state)) return;
+      drafts.delete(group.id);
+      render();
+    });
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'todo-deadline-trigger';
+    trigger.setAttribute('aria-label', `选择${group.name}的截止时间`);
+    const label = document.createElement('span');
+    if (!drafts.has(group.id)) ensureDraft(group.id);
+    label.textContent = composerLabel(group.id);
+    trigger.dataset.workGroup = group.id;
+    trigger.append(label);
+    trigger.addEventListener('click', () => openWorkCalendar(group.id, trigger));
+    row.append(input, trigger);
+    return row;
+  }
+
+  function renderTask(task) {
+    const card = document.createElement('li');
+    card.className = `todo-item${task.done ? ' done' : ''}`;
+    card.dataset.sourceId = task.sourceId;
     const checkbox = document.createElement('button');
     checkbox.type = 'button';
     checkbox.className = 'checkbox';
+    checkbox.innerHTML = '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     checkbox.setAttribute('aria-pressed', task.done ? 'true' : 'false');
     checkbox.setAttribute('aria-label', task.done ? `恢复未完成：${task.text}` : `标记完成：${task.text}`);
     checkbox.addEventListener('click', () => {
@@ -149,10 +279,61 @@
     });
     const title = document.createElement('button');
     title.type = 'button';
-    title.className = 'work-task-title';
-    title.textContent = task.text;
-    if (task.done) title.classList.add('done');
-    title.addEventListener('click', () => beginEdit(card, task, title));
+    title.className = 'todo-copy';
+    const text = document.createElement('span');
+    text.className = 'todo-text';
+    text.textContent = task.text;
+    title.append(text);
+    const presentation = domain.workDeadlinePresentation(task, Date.now());
+    if (presentation.known) {
+      const pill = document.createElement('span');
+      pill.className = 'work-remaining';
+      pill.dataset.tone = presentation.tone;
+      pill.textContent = presentation.label;
+      const time = document.createElement('time');
+      time.className = 'todo-ddl';
+      time.dateTime = presentation.deadline;
+      time.textContent = formatDue(presentation.deadline);
+      title.append(pill, time);
+    } else {
+      const unknown = document.createElement('span');
+      unknown.className = 'todo-ddl';
+      unknown.textContent = '未设置';
+      title.append(unknown);
+    }
+    if (task.origin === 'manual') {
+      const origin = document.createElement('span');
+      origin.className = 'work-origin';
+      origin.textContent = '手动';
+      title.append(origin);
+    }
+    if (task.responsibility !== 'mine') {
+      const tag = document.createElement('span');
+      tag.className = 'work-responsibility';
+      tag.textContent = '待确认';
+      title.append(tag);
+    }
+    title.addEventListener('click', (event) => {
+      if (event.target.closest('.work-source')) return;
+      beginEdit(card, task, text);
+    });
+    if (task.evidence && (task.evidence.excerpt || task.evidence.sourceRef || task.evidence.recordingAt)) {
+      const source = document.createElement('button');
+      source.type = 'button';
+      source.className = 'work-source';
+      source.textContent = '依据';
+      source.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const open = card.querySelector('.work-evidence');
+        if (open) { open.remove(); return; }
+        const quote = document.createElement('blockquote');
+        quote.className = 'work-evidence';
+        const when = task.evidence.recordingAt ? `录音 ${task.evidence.recordingAt}` : '无录音时间点';
+        quote.textContent = `${task.evidence.sourceRef || '无来源'} · ${when}${task.evidence.excerpt ? `\n${task.evidence.excerpt}` : ''}`;
+        card.append(quote);
+      });
+      title.append(source);
+    }
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'delete';
@@ -162,20 +343,7 @@
       const dismissed = domain.dismissWorkTask(state, task.id, Date.now());
       if (dismissed.ok && saveState(dismissed.state)) render();
     });
-    row.append(checkbox, title, remove);
-    const meta = document.createElement('p');
-    meta.className = 'work-meta';
-    const when = task.evidence.recordingAt ? `录音 ${task.evidence.recordingAt}` : '无录音时间点';
-    const due = task.deadline ? deadlineFormat.format(new Date(task.deadline)) : '未设置截止日期';
-    const ref = task.evidence.sourceRef || (task.origin === 'manual' ? '手工添加' : '无来源');
-    meta.textContent = `${ref} · ${when} · ${due}`;
-    card.append(row, meta);
-    if (task.evidence.excerpt) {
-      const quote = document.createElement('blockquote');
-      quote.className = 'work-evidence';
-      quote.textContent = task.evidence.excerpt;
-      card.append(quote);
-    }
+    card.append(checkbox, title, remove);
     if (task.revokeRequested) {
       const flag = document.createElement('p');
       flag.className = 'work-flag';
@@ -183,6 +351,151 @@
       card.append(flag);
     }
     return card;
+  }
+
+  function renderDrawer(layout) {
+    const drawer = document.getElementById('work-drawer');
+    if (!drawer) return;
+    const group = [...layout.review, ...layout.custom].find((item) => item.id === drawerGroup);
+    if (!group) {
+      drawer.hidden = true;
+      drawer.replaceChildren();
+      return;
+    }
+    drawer.hidden = false;
+    drawer.replaceChildren();
+    const card = document.createElement('section');
+    card.className = 'quadrant tile work-drawer-card';
+    const header = document.createElement('div');
+    header.className = 'quadrant-header';
+    const title = document.createElement('strong');
+    title.textContent = group.name;
+    const note = document.createElement('span');
+    note.className = 'work-drawer-note';
+    note.textContent = '移到四宫格只会改分组，不会把待确认改成我的责任。';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'delete';
+    close.textContent = '×';
+    close.setAttribute('aria-label', '关闭');
+    close.addEventListener('click', () => { drawerGroup = ''; render(); });
+    header.append(title, note, close);
+    const list = document.createElement('ul');
+    list.className = 'todo-list';
+    tasksIn(group.id).forEach((task) => {
+      const row = renderTask(task);
+      const move = document.createElement('select');
+      move.className = 'work-move';
+      move.setAttribute('aria-label', `移动${task.text}`);
+      const stay = document.createElement('option');
+      stay.value = '';
+      stay.textContent = '移动到…';
+      move.append(stay);
+      layout.slots.forEach((slot) => slot.panes.forEach((target) => {
+        const option = document.createElement('option');
+        option.value = target.id;
+        option.textContent = target.name;
+        move.append(option);
+      }));
+      move.addEventListener('change', () => {
+        if (!move.value) return;
+        const edited = domain.editWorkTask(state, task.id, { groupId: move.value }, Date.now());
+        if (edited.ok && saveState(edited.state)) {
+          if (edited.task.responsibility !== task.responsibility) setNote('责任字段被意外改动，已停止。');
+          render();
+        }
+      });
+      row.append(move);
+      list.append(row);
+    });
+    card.append(header, list, renderComposer(group));
+    drawer.append(card);
+  }
+
+  function openWorkCalendar(groupId, anchor) {
+    const popover = document.getElementById('work-date-popover');
+    const grid = document.getElementById('work-calendar-grid');
+    const month = document.getElementById('work-calendar-month');
+    const hour = document.getElementById('work-calendar-hour');
+    const minute = document.getElementById('work-calendar-minute');
+    if (!popover || !grid || !window.NotchDomain) return;
+    const current = drafts.get(groupId) ? new Date(drafts.get(groupId)) : new Date();
+    calendar = {
+      groupId,
+      year: current.getFullYear(),
+      month: current.getMonth(),
+      day: current.getDate(),
+    };
+    if (!hour.options.length) {
+      for (let value = 0; value < 24; value += 1) hour.add(new Option(String(value).padStart(2, '0'), String(value)));
+      for (let value = 0; value < 60; value += 5) minute.add(new Option(String(value).padStart(2, '0'), String(value)));
+    }
+    hour.value = String(current.getHours());
+    minute.value = String(Math.floor(current.getMinutes() / 5) * 5);
+    const paint = () => {
+      month.textContent = `${calendar.year}年 ${calendar.month + 1}月`;
+      grid.replaceChildren();
+      const first = (new Date(calendar.year, calendar.month, 1).getDay() + 6) % 7;
+      const days = new Date(calendar.year, calendar.month + 1, 0).getDate();
+      for (let index = 0; index < first; index += 1) grid.append(document.createElement('span'));
+      for (let day = 1; day <= days; day += 1) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = String(day);
+        button.dataset.day = String(day);
+        if (day === calendar.day) button.className = 'selected';
+        grid.append(button);
+      }
+    };
+    paint();
+    grid.onclick = (event) => {
+      const button = event.target.closest('[data-day]');
+      if (!button) return;
+      calendar.day = Number(button.dataset.day);
+      commitCalendar();
+      paint();
+    };
+    hour.onchange = commitCalendar;
+    minute.onchange = commitCalendar;
+    document.getElementById('work-calendar-previous').onclick = () => {
+      const shifted = window.NotchDomain.shiftCalendarMonth(calendar, -1);
+      if (!shifted) return;
+      calendar.year = shifted.year;
+      calendar.month = shifted.month;
+      paint();
+    };
+    document.getElementById('work-calendar-next').onclick = () => {
+      const shifted = window.NotchDomain.shiftCalendarMonth(calendar, 1);
+      if (!shifted) return;
+      calendar.year = shifted.year;
+      calendar.month = shifted.month;
+      paint();
+    };
+    document.getElementById('work-calendar-clear').onclick = () => {
+      drafts.set(groupId, null);
+      popover.hidden = true;
+      render();
+    };
+    const card = anchor.closest('.work-card, .work-drawer-card') || document.getElementById('work-board');
+    card.append(popover);
+    popover.hidden = false;
+  }
+
+  function commitCalendar() {
+    if (!calendar) return;
+    const hour = document.getElementById('work-calendar-hour');
+    const minute = document.getElementById('work-calendar-minute');
+    const deadline = window.NotchDomain.calendarDeadline({
+      year: calendar.year,
+      month: calendar.month,
+      day: calendar.day,
+      hour: hour.value,
+      minute: minute.value,
+    });
+    if (!deadline) return;
+    drafts.set(calendar.groupId, deadline);
+    const trigger = document.querySelector(`.todo-deadline-trigger[data-work-group="${CSS.escape(calendar.groupId)}"]`);
+    if (trigger) trigger.querySelector('span').textContent = composerLabel(calendar.groupId);
   }
 
   function beginEdit(card, task, title) {
@@ -300,8 +613,7 @@
     const classicView = document.getElementById('todo-classic-view');
     const workView = document.getElementById('todo-work-view');
     function show(which) {
-      const useWork = which === 'work';
-      try { localStorage.setItem(domain.WORK_VIEW_KEY, useWork ? 'work' : 'classic'); } catch (error) {}
+      const useWork = domain.resolveTodoSubview(which) === 'work';
       if (classicView) classicView.hidden = useWork;
       if (workView) workView.hidden = !useWork;
       classic?.setAttribute('aria-selected', useWork ? 'false' : 'true');
@@ -310,9 +622,10 @@
     }
     classic?.addEventListener('click', () => show('classic'));
     work?.addEventListener('click', () => show('work'));
-    let saved = 'classic';
-    try { saved = localStorage.getItem(domain.WORK_VIEW_KEY) || 'classic'; } catch (error) {}
-    show(saved === 'work' ? 'work' : 'classic');
+    document.addEventListener('notch:tabchange', (event) => {
+      if (event.detail?.tab === 'todo') show('enter-todo');
+    });
+    show('startup');
 
     document.getElementById('work-new-group')?.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' || event.isComposing) return;
@@ -379,6 +692,127 @@
     window.addEventListener('focus', refreshCatchup);
     setInterval(refreshCatchup, 60000);
     refreshCatchup();
+    bindTicnote();
+  }
+
+  function bindTicnote() {
+    const keyInput = document.getElementById('ticnote-appkey');
+    const grokInput = document.getElementById('grok-api-key');
+    const refresh = async () => {
+      const tic = await window.notchAPI?.ticnoteStatus?.();
+      const grok = await window.notchAPI?.grokStatus?.();
+      const label = document.getElementById('ticnote-status-label');
+      const connection = document.getElementById('ticnote-connection');
+      const grokStatus = document.getElementById('grok-call-status');
+      const model = document.getElementById('grok-model-label');
+      if (tic?.status && label) {
+        label.textContent = tic.status.configured ? '密钥已保存' : '未连接';
+        if (connection) {
+          connection.textContent = !tic.status.configured
+            ? '尚未验证'
+            : tic.status.folderCount
+              ? `已选 ${tic.status.folderCount} 个文件夹，每日任务仍关闭`
+              : '已保存密钥，还没有指定文件夹';
+        }
+      }
+      if (grok?.status) {
+        if (model) model.textContent = `模型 ${grok.status.model}，按 token 计费`;
+        if (grokStatus) grokStatus.textContent = grok.status.configured
+          ? '密钥已保存，本版本不向 api.x.ai 发送请求'
+          : '未配置，不会访问 api.x.ai';
+      }
+    };
+    document.getElementById('ticnote-save')?.addEventListener('click', async () => {
+      const saved = await window.notchAPI?.ticnoteSaveKey?.(keyInput?.value || '');
+      if (keyInput) keyInput.value = '';
+      if (!saved?.ok) setNote(saved?.reason === 'overseas_refused' ? '海外密钥已拒绝，请使用国内正式 tncn_sk_ 密钥。' : '密钥没有保存。');
+      refresh();
+    });
+    document.getElementById('ticnote-clear')?.addEventListener('click', async () => {
+      await window.notchAPI?.ticnoteClearKey?.();
+      if (keyInput) keyInput.value = '';
+      document.getElementById('ticnote-projects')?.replaceChildren();
+      document.getElementById('ticnote-folders')?.replaceChildren();
+      refresh();
+    });
+    document.getElementById('ticnote-verify')?.addEventListener('click', async () => {
+      const verified = await window.notchAPI?.ticnoteVerify?.();
+      const list = document.getElementById('ticnote-projects');
+      if (!verified?.ok) {
+        setNote(verified?.reason === 'no_key' ? '先保存国内正式 AppKey。没有密钥时不会访问 TicNote。' : '验证没有完成，没有读取录音内容。');
+        refresh();
+        return;
+      }
+      if (list) {
+        list.replaceChildren();
+        verified.projects.forEach((project) => {
+          const label = document.createElement('label');
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.value = project.id;
+          input.addEventListener('change', () => saveTicnoteProjects());
+          label.append(input, document.createTextNode(` ${project.name}（${project.fileNum == null ? '文件数未知' : `${project.fileNum} 个文件`}）`));
+          list.append(label);
+        });
+      }
+      refresh();
+    });
+    document.getElementById('grok-save')?.addEventListener('click', async () => {
+      const saved = await window.notchAPI?.grokSaveKey?.(grokInput?.value || '');
+      if (grokInput) grokInput.value = '';
+      if (!saved?.ok) setNote('Grok 密钥没有保存。');
+      refresh();
+    });
+    document.getElementById('grok-clear')?.addEventListener('click', async () => {
+      await window.notchAPI?.grokClearKey?.();
+      if (grokInput) grokInput.value = '';
+      refresh();
+    });
+    refresh();
+  }
+
+  async function saveTicnoteProjects() {
+    const ids = [...document.querySelectorAll('#ticnote-projects input:checked')].map((input) => input.value);
+    const saved = await window.notchAPI?.ticnoteSaveScope?.({
+      projects: ids.map((id) => ({ id })),
+      folders: [],
+    });
+    if (!saved?.ok) {
+      setNote('项目范围没有保存。');
+      return;
+    }
+    const folders = document.getElementById('ticnote-folders');
+    if (!folders) return;
+    folders.replaceChildren();
+    const note = document.createElement('p');
+    note.className = 'work-drawer-note';
+    note.textContent = '下面每一项只授权自己这一层。勾选父文件夹不会带上子文件夹，同名项也不会一起选中。';
+    folders.append(note);
+    for (const id of ids) {
+      const listed = await window.notchAPI?.ticnoteListFolders?.(id);
+      (listed?.folders || []).forEach((folder) => {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = folder.id;
+        input.dataset.projectId = folder.projectId;
+        input.addEventListener('change', () => saveTicnoteFolders());
+        const depth = folder.depth ? `第 ${folder.depth} 层` : '项目根目录';
+        label.append(input, document.createTextNode(` ${folder.name}（${depth}，不含子文件夹）`));
+        folders.append(label);
+      });
+    }
+  }
+
+  async function saveTicnoteFolders() {
+    const projects = [...document.querySelectorAll('#ticnote-projects input:checked')].map((input) => ({ id: input.value }));
+    const folders = [...document.querySelectorAll('#ticnote-folders input:checked')].map((input) => ({
+      id: input.value,
+      projectId: input.dataset.projectId,
+    }));
+    const saved = await window.notchAPI?.ticnoteSaveScope?.({ projects, folders });
+    if (!saved?.ok) setNote('文件夹范围没有保存。每日任务仍然关闭。');
+    else setNote('授权范围已保存。每日任务仍然关闭，需要本机端到端验收后才能启用。');
   }
 
   window.NotchWork = { applyImport, reload: () => { state = loadState(); render(); } };

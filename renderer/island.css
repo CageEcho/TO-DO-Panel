@@ -286,6 +286,7 @@ button {
   gap: var(--space-1);
 }
 
+.peek-ticnote { margin: 0; color: var(--color-text-3); font-size: var(--font-meta); }
 .peek-tool + .peek-tool {
   padding-top: var(--space-5);
   border-top: 1px solid var(--color-hairline);

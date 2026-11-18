@@ -78,7 +78,7 @@ TO-DO Panel 是一个常驻 macOS / Windows 屏幕顶部的本地工作台。Mac
 ### macOS
 
 1. 前往 [GitHub Releases](https://github.com/xiaopu-ai/TO-DO-Panel/releases/latest) 下载 `TO-DO-Panel-*-arm64.dmg`。
-2. 打开 DMG，将 `TO-DO Panel.app` 拖入「应用程序」。
+2. 如果应用正在运行，先完全退出，再打开 DMG，将 `TO-DO Panel Work.app` 拖入「应用程序」并替换。不要在应用还开着时覆盖。替换应用不会清空 `~/Library/Application Support/TO-DO Panel Work`，私有转写目录里的 `venv`、`uv-cache` 和 `model-cache` 也留在原处。
 3. 首次启动若被 macOS 拦截，前往「系统设置 → 隐私与安全性」，点击「仍要打开」。
 4. 再次启动，根据需要授予辅助功能、屏幕录制、麦克风或摄像头权限。
 
@@ -166,9 +166,9 @@ mv ~/Library/Application\ Support/TO-DO\ Panel\ Work/todo-inbox/.agent.tmp \
 
 ## 工作视图和每日导入
 
-待办页可以在「分类待办」和「工作」之间切换。分类待办仍是原来的四象限，存储键 `notch-todo-data` 不变。工作待办单独存在 `notch-work-tasks-v1`，默认分组是今日工作、待确认、阻塞跟进；分组可以改名，也可以再加自定义分组。
+待办页里「工作」在前，「分类待办」在后。新安装、进入待办和重新打开都会先显示工作页；以前记住的分类待办页签不再抢在前面。当次仍可点开分类待办，里面的 `notch-todo-data` 不会被工作页改掉。工作待办单独存在 `notch-work-tasks-v1`。工作页是四宫格：左上在每日工作和每周工作之间切换，右上是自媒体&写作，左下是 Vibe coding，右下是工作。待确认和阻塞跟进从顶部入口打开，不占四宫格。可以直接输入、修改、勾选、删除和设置日期。手工任务标成「手动」，不编造录音依据。自动导入进来的任务仍保留来源和依据；下一次同步不能覆盖或撤回手工任务。分组可以改名。新增这些分组不会扩大本机采集目录。
 
-自动任务必须带稳定 `sourceId`、来源引用和依据摘录。录音时间点有就写，没有就留空。`responsibility` 为 `mine` 才进入今日工作或阻塞跟进；`uncertain` 或未填写进入待确认；`other` 不进入待办。截止日期未知就写 `null`，不要编造时间和负责人。
+自动任务必须带稳定 `sourceId`、来源引用和依据摘录。录音时间点有就写，没有就留空。`responsibility` 为 `mine` 才进入所选工作分组；`uncertain` 或未填写进入待确认，不会被改成 `mine`；`other` 不进入待办。截止日期未知就写 `null`，不要编造时间和剩余进度。
 
 整理由外部完成：可以是一次 Grok 对话里整理好的结果，也可以是你自己写的 JSON。应用不把普通聊天当成 API，也不调用其他模型冒充 Grok。当前版本即使配置了 `GROK_API_KEY` 也不会代发请求。没有密钥时，用 `fixtures/work-import/demo-batch.json` 就能完成导入测试。
 
@@ -190,6 +190,18 @@ mv ~/Library/Application\ Support/TO-DO\ Panel\ Work/todo-inbox/.agent.tmp \
 - 超过体积上限的文件记为 `too_large`，不整文件读入。
 - 相同内容的录音用 SHA-256 做水位，重复的不再转写。
 - 清单里的路径是相对路径，并使用 `rootLabel: "private-local-root"`。绝对路径只留在本机私有配置，不写入仓库。
+
+### TicNote
+
+TicNote 是新增的云端只读来源，不替代、也不扩大已经授权的 Mac 桌面文件夹。设置页保存的 AppKey 由主进程用 `safeStorage` 加密，渲染层只知道是否已保存，不回显完整密钥。只接受国内正式前缀 `tncn_sk_`，登录地址固定为 `POST https://voice-api.ticnote.cn/api/p1/appkey/login`。海外和测试环境的密钥会被拒绝。令牌只留在内存里，遇到重定向就停止，不会把令牌发给下载域名。
+
+连接验证只读取项目名称和文件数。授权名单保存项目 ID 和文件夹 ID，默认是空的。没有选定文件夹时，不读取录音正文、音频或转写，也不遍历其他项目的文件内容。勾选一个文件夹只覆盖它直接包含的录音；子文件夹要单独勾选。同名文件夹不会因为名称相近被自动加入。已有转写按 `recordId` 和 revision 增量读取；没有转写就标成缺失，不会自动提交收费转写、上传、分享或删除。
+
+保存 TicNote 范围不会打开每日任务。日程仍要等本机端到端验收。
+
+### Grok API
+
+整理待办和读取 TicNote 是两件事。应用可以另外保存一把 xAI API Key，模型写明是 `grok-4`，费用按 xAI 账户的 token 单价计算。这把密钥不是当前聊天订阅，也不是 TicNote 的 AppKey。没有密钥时配置保持关闭。当前版本即使保存了密钥也不会向 `api.x.ai` 发请求，也不会把转写上传出去。
 
 ### 协调端读写契约
 
@@ -285,7 +297,7 @@ node scripts/grok-work-import.js \
 | `action` | `upsert` 或 `revoke`。撤回不会删除已完成或已手工改过的任务 |
 | `revision` | 可选整数。更小的版本不会覆盖 |
 | `responsibility` | `mine`、`uncertain`、`other`。不能写人名 |
-| `group` | `today`、`confirm`、`blocked` 或已存在的自定义分组 id。未知分组里的本人任务进入今日工作 |
+| `group` | `today`、`weekly`、`media`、`vibe`、`desk`、`confirm`、`blocked`，或已存在分组的 id / 唯一名称。未知分组里的本人任务进入每日工作。`uncertain` 一律进入待确认 |
 | `deadline` | 带时区的 ISO 8601，或 `null`。只有日期、没有时区都会拒绝，不会改成当天 23:30 |
 | `evidence.excerpt` | 必填，最多 500 字 |
 | `evidence.sourceRef` | 必填，只作为文字显示，应用不会按它打开文件 |

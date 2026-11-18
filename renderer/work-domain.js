@@ -18,9 +18,20 @@
   const WORK_LOCKS = ['text', 'group', 'deadline', 'done', 'dismissed', 'responsibility'];
   const WORK_GENERATORS = new Set(['fixture', 'grok-assistant', 'manual-file']);
   const WORK_DEFAULT_GROUPS = [
-    { id: 'today', name: '今日工作', system: true },
+    { id: 'today', name: '每日工作', system: true },
+    { id: 'weekly', name: '每周工作', system: true },
+    { id: 'media', name: '自媒体&写作', system: true },
+    { id: 'vibe', name: 'Vibe coding', system: true },
+    { id: 'desk', name: '工作', system: true },
     { id: 'confirm', name: '待确认', system: true },
     { id: 'blocked', name: '阻塞跟进', system: true },
+  ];
+  const WORK_LEGACY_NAMES = { today: '今日工作' };
+  const WORK_BOARD = [
+    { slot: 'cadence', panes: ['today', 'weekly'] },
+    { slot: 'media', panes: ['media'], dot: 'p1' },
+    { slot: 'vibe', panes: ['vibe'], dot: 'p2' },
+    { slot: 'desk', panes: ['desk'], dot: 'p3' },
   ];
 
   function cloneState(state) {
@@ -101,7 +112,9 @@
     const source = Array.isArray(groups) ? groups : [];
     const system = WORK_DEFAULT_GROUPS.map((item) => {
       const found = source.find((group) => group && group.id === item.id);
-      return { id: item.id, name: cleanLine(found && found.name, 24) || item.name, system: true };
+      const foundName = cleanLine(found && found.name, 24);
+      const name = !foundName || foundName === WORK_LEGACY_NAMES[item.id] ? item.name : foundName;
+      return { id: item.id, name, system: true };
     });
     const custom = [];
     source.forEach((group) => {
@@ -367,10 +380,12 @@
     if (responsibility !== 'mine') return { skip: 'responsibility 只能是 mine、uncertain 或 other' };
     const requested = typeof entry.group === 'string' ? cleanLine(entry.group, 32) : '';
     if (!requested || requested === 'today') return { responsibility: 'mine', groupId: 'today' };
-    if (requested === 'confirm') return { responsibility: 'mine', groupId: 'confirm', routed: 'explicit-confirm' };
-    if (requested === 'blocked') return { responsibility: 'mine', groupId: 'blocked' };
-    if (groups.some((group) => group.id === requested)) return { responsibility: 'mine', groupId: requested };
-    return { responsibility: 'mine', groupId: 'today', warning: `未知分组「${requested}」，已放入今日工作` };
+    const byId = groups.find((group) => group.id === requested);
+    if (byId) return { responsibility: 'mine', groupId: byId.id, routed: byId.id === 'confirm' ? 'explicit-confirm' : '' };
+    const byName = groups.filter((group) => group.name === requested);
+    if (byName.length === 1) return { responsibility: 'mine', groupId: byName[0].id };
+    const todayName = (groups.find((group) => group.id === 'today') || {}).name || '每日工作';
+    return { responsibility: 'mine', groupId: 'today', warning: `未知分组「${requested}」，已放入${todayName}` };
   }
 
   function readEvidence(entry) {
@@ -491,6 +506,10 @@
         return;
       }
       const existing = next.tasks.find((task) => task.sourceId === sourceId);
+      if (existing && existing.origin === 'manual') {
+        result.skipped.push({ index, id: sourceId, reason: '手工任务保持原样，同步不能覆盖或撤回' });
+        return;
+      }
       if (existing && revision < existing.revision) {
         result.skipped.push({ index, id: sourceId, reason: '旧版本，未覆盖' });
         return;
@@ -715,7 +734,7 @@
     const current = normalizeWorkState(state);
     const label = cleanLine(name, 24);
     if (!label) return { ok: false, error: 'empty', state: current };
-    if (current.groups.length >= 8) return { ok: false, error: 'limit', state: current };
+    if (current.groups.filter((group) => !group.system).length >= 5) return { ok: false, error: 'limit', state: current };
     let serial = current.groups.length + 1;
     let id = `g${serial.toString(36)}${label.length.toString(36)}`.replace(/[^a-z0-9]/g, '').slice(0, 12);
     if (!/^g[a-z0-9]{2,20}$/.test(id)) id = `g${serial}x`;
@@ -757,6 +776,12 @@
     const text = cleanLine(patch && patch.text, WORK_TEXT_LIMIT);
     if (!text) return { ok: false, error: 'empty_text', state: current };
     const groupId = current.groups.some((group) => group.id === patch.groupId) ? patch.groupId : 'today';
+    let deadline = null;
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'deadline') && patch.deadline != null && patch.deadline !== '') {
+      const parsed = parseWorkDeadline(patch.deadline);
+      if (parsed.error) return { ok: false, error: parsed.error, state: current };
+      deadline = parsed.deadline;
+    }
     const sourceId = cleanSourceId(`manual:${now.toString(36)}${current.tasks.length.toString(36)}`);
     const next = cloneState(current);
     next.tasks.push({
@@ -766,7 +791,7 @@
       text,
       groupId,
       responsibility: 'mine',
-      deadline: null,
+      deadline,
       evidence: { excerpt: '', sourceRef: '', recordingAt: null },
       done: false,
       completedAt: null,
@@ -781,8 +806,55 @@
     return { ok: true, state: next };
   }
 
+  function resolveTodoSubview(event) {
+    if (event === 'classic') return 'classic';
+    return 'work';
+  }
+
+  function workTaskSourceLabel(task) {
+    return task && task.origin === 'manual' ? '手动' : '导入';
+  }
+
   function activeWorkTasks(state) {
     return normalizeWorkState(state).tasks.filter((task) => !task.revoked && !task.dismissed);
+  }
+
+  function workBoardLayout(state) {
+    const groups = normalizeWorkState(state).groups;
+    const byId = Object.fromEntries(groups.map((group) => [group.id, group]));
+    return {
+      slots: WORK_BOARD.map((slot) => ({
+        slot: slot.slot,
+        dot: slot.dot || '',
+        panes: slot.panes.map((id) => byId[id]).filter(Boolean),
+      })),
+      review: ['confirm', 'blocked'].map((id) => byId[id]).filter(Boolean),
+      custom: groups.filter((group) => !group.system),
+    };
+  }
+
+  function shanghaiDayNumber(parts) {
+    if (!parts || !/^\d{4}-\d{2}-\d{2}$/.test(parts.dateKey)) return null;
+    const [year, month, day] = parts.dateKey.split('-').map(Number);
+    return Date.UTC(year, month - 1, day) / 86400000;
+  }
+
+  function workDeadlinePresentation(task, now = Date.now()) {
+    const current = Number(now);
+    if (!task || task.deadline == null || task.deadline === '' || !Number.isFinite(current)) {
+      return { known: false, deadline: null, label: '', tone: '', days: null };
+    }
+    const deadline = Date.parse(task.deadline);
+    if (!Number.isFinite(deadline)) return { known: false, deadline: null, label: '', tone: '', days: null };
+    const start = shanghaiDayNumber(shanghaiParts(current));
+    const end = shanghaiDayNumber(shanghaiParts(deadline));
+    if (start == null || end == null) return { known: false, deadline: null, label: '', tone: '', days: null };
+    const days = end - start;
+    if (current >= deadline) return { known: true, deadline: new Date(deadline).toISOString(), label: '逾期', tone: 'red', days: 0, overdue: true };
+    if (days <= 0) return { known: true, deadline: new Date(deadline).toISOString(), label: '今天', tone: 'red', days: 0, overdue: false };
+    if (days === 1) return { known: true, deadline: new Date(deadline).toISOString(), label: '1天', tone: 'red', days, overdue: false };
+    if (days <= 7) return { known: true, deadline: new Date(deadline).toISOString(), label: `${days}天`, tone: 'orange', days, overdue: false };
+    return { known: true, deadline: new Date(deadline).toISOString(), label: `${days}天`, tone: 'yellow', days, overdue: false };
   }
 
   function assessGrokAdapter({ env = {}, argv = [] } = {}) {
@@ -833,7 +905,11 @@
     renameWorkGroup,
     removeWorkGroup,
     createManualWorkTask,
+    resolveTodoSubview,
+    workTaskSourceLabel,
     activeWorkTasks,
+    workBoardLayout,
+    workDeadlinePresentation,
     assessGrokAdapter,
   };
 });
