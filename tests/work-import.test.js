@@ -25,6 +25,7 @@ const {
   activeWorkTasks,
   publicWorkSchedule,
   workBoardLayout,
+  workHomeLayout,
   workDeadlinePresentation,
   createManualWorkTask,
   normalizeWorkState,
@@ -433,9 +434,10 @@ test('work board keeps review groups off the four cards and does not invent a de
   assert.deepEqual(workBoardLayout(fresh).slots.map((slot) => slot.panes.map((group) => group.id)), [
     ['today', 'weekly'],
     ['media'],
-    ['vibe'],
     ['desk'],
+    ['vibe'],
   ]);
+  assert.deepEqual(workHomeLayout(fresh).map((group) => group.id), ['today', 'confirm', 'blocked']);
   assert.deepEqual(workBoardLayout(fresh).review.map((group) => group.id), ['confirm', 'blocked']);
   const legacy = normalizeWorkState({ ...fresh, groups: fresh.groups.map((group) => group.id === 'today' ? { ...group, name: '今日工作' } : group) });
   assert.equal(legacy.groups.find((group) => group.id === 'today').name, '每日工作');
@@ -453,8 +455,19 @@ test('work board keeps review groups off the four cards and does not invent a de
   const moved = editWorkTask(uncertain.state, uncertain.state.tasks[0].id, { groupId: 'today' }, NOW + 5);
   assert.equal(moved.task.groupId, 'today');
   assert.equal(moved.task.responsibility, 'uncertain');
-  const manual = createManualWorkTask(fresh, { text: '手工但没有截止日期', groupId: 'desk' }, NOW);
-  assert.equal(manual.state.tasks.at(-1).deadline, null);
+  const manual = createManualWorkTask(uncertain.state, { text: '首页和待办共用这一条', groupId: 'today' }, NOW + 5);
+  const shared = manual.state.tasks.find((task) => task.text === '首页和待办共用这一条');
+  const checked = editWorkTask(manual.state, shared.id, { done: true }, NOW + 6);
+  const reloaded = normalizeWorkState(JSON.parse(JSON.stringify(checked.state)));
+  const again = reloaded.tasks.find((task) => task.sourceId === shared.sourceId);
+  assert.equal(again.done, true);
+  assert.equal(again.groupId, 'today');
+  assert.equal(workHomeLayout(reloaded).find((group) => group.id === 'today').id, 'today');
+  assert.equal(workBoardLayout(reloaded).slots[2].panes[0].id, 'desk');
+  assert.equal(workBoardLayout(reloaded).slots[3].panes[0].id, 'vibe');
+  assert.equal(again.sourceId, shared.sourceId);
+  const blank = createManualWorkTask(fresh, { text: '手工但没有截止日期', groupId: 'desk' }, NOW);
+  assert.equal(blank.state.tasks.at(-1).deadline, null);
 });
 
 test('startup opens work even if classic was remembered, and manual tasks survive sync and reload', () => {

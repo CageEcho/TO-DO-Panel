@@ -565,6 +565,46 @@ body {
 }
 
 /* ============ 首页 · 中心镜子工作台 ============ */
+#tab-home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 0;
+}
+.home-view-switch { display: flex; gap: var(--s-2); flex: none; }
+.home-view-switch button {
+  height: 28px;
+  padding: 0 var(--s-3);
+  border: var(--hairline-w) solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+}
+.home-view-switch button[aria-selected='true'] { color: var(--text-1); background: var(--surface-2); }
+.home-work-view { flex: 1; min-height: 0; }
+.home-work-view[hidden],
+#tab-home .home-bento[hidden] { display: none; }
+.home-work-columns {
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+.work-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--s-3);
+  border-radius: var(--r-tile);
+  background: var(--surface-1);
+}
+.work-column[data-group='today'] { box-shadow: inset 0 0 0 var(--hairline-w) var(--p3); }
+.work-column[data-group='confirm'] { box-shadow: inset 0 0 0 var(--hairline-w) var(--p1); }
+.work-column[data-group='blocked'] { box-shadow: inset 0 0 0 var(--hairline-w) var(--p0); }
+.work-column .todo-list { flex: 1; min-height: 0; overflow: auto; }
+.work-column-head { display: flex; align-items: center; gap: var(--s-2); margin-bottom: var(--s-2); }
 .home-bento {
   display: grid;
   grid-template-columns: 190px 270px minmax(280px, 1fr) 230px;

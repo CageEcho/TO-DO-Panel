@@ -30,9 +30,10 @@
   const WORK_BOARD = [
     { slot: 'cadence', panes: ['today', 'weekly'] },
     { slot: 'media', panes: ['media'], dot: 'p1' },
-    { slot: 'vibe', panes: ['vibe'], dot: 'p2' },
     { slot: 'desk', panes: ['desk'], dot: 'p3' },
+    { slot: 'vibe', panes: ['vibe'], dot: 'p2' },
   ];
+  const WORK_HOME_COLUMNS = ['today', 'confirm', 'blocked'];
 
   function cloneState(state) {
     return JSON.parse(JSON.stringify(state));
@@ -833,6 +834,12 @@
     };
   }
 
+  function workHomeLayout(state) {
+    const groups = normalizeWorkState(state).groups;
+    const byId = Object.fromEntries(groups.map((group) => [group.id, group]));
+    return WORK_HOME_COLUMNS.map((id) => byId[id]).filter(Boolean);
+  }
+
   function shanghaiDayNumber(parts) {
     if (!parts || !/^\d{4}-\d{2}-\d{2}$/.test(parts.dateKey)) return null;
     const [year, month, day] = parts.dateKey.split('-').map(Number);
@@ -908,6 +915,7 @@
     workTaskSourceLabel,
     activeWorkTasks,
     workBoardLayout,
+    workHomeLayout,
     workDeadlinePresentation,
     assessGrokAdapter,
   };

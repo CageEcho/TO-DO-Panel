@@ -98,6 +98,13 @@
 
         <div class="panels" id="panels">
           <section id="tab-home" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-home" aria-hidden="true" inert>
+            <div class="home-view-switch" role="tablist" aria-label="首页视图">
+              <button id="home-view-dashboard" type="button" role="tab" aria-selected="true" aria-controls="home-bento">概览</button>
+              <button id="home-view-work" type="button" role="tab" aria-selected="false" aria-controls="home-work-view">工作</button>
+            </div>
+            <div class="home-work-view" id="home-work-view" hidden>
+              <div class="home-work-columns" id="home-work-columns"></div>
+            </div>
             <div class="home-bento" id="home-bento" aria-label="可长按拖动调整的首页布局">
               <!-- 本地音乐播放器控制：播放器由主进程识别，可点标题切换 -->
               <section class="tile home-music" id="home-music" data-home-module="music" data-widget-size="medium" aria-label="音乐播放器">

@@ -160,7 +160,43 @@
     board.replaceChildren();
     layout.slots.forEach((slot) => board.append(renderCard(slot)));
     renderDrawer(layout);
+    renderHomeColumns();
     syncSettingsForm();
+  }
+
+  function renderHomeColumns() {
+    const host = document.getElementById('home-work-columns');
+    if (!host || typeof domain.workHomeLayout !== 'function') return;
+    host.replaceChildren();
+    domain.workHomeLayout(state).forEach((group) => {
+      const column = document.createElement('section');
+      column.className = 'work-column tile';
+      column.dataset.group = group.id;
+      const header = document.createElement('div');
+      header.className = 'work-column-head';
+      const name = document.createElement('input');
+      name.className = 'todo-category-name';
+      name.value = group.name;
+      name.maxLength = 24;
+      name.setAttribute('aria-label', `修改${group.name}名称`);
+      name.addEventListener('change', () => renameGroup(group, name));
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = String(pendingCount(group.id));
+      header.append(name, count);
+      const list = document.createElement('ul');
+      list.className = 'todo-list';
+      const tasks = tasksIn(group.id);
+      if (!tasks.length) {
+        const empty = document.createElement('li');
+        empty.className = 'work-empty';
+        empty.textContent = '在下方输入，回车保存';
+        list.append(empty);
+      }
+      tasks.forEach((task) => list.append(renderTask(task)));
+      column.append(header, list, renderComposer(group));
+      host.append(column);
+    });
   }
 
   function renderCard(slot) {
@@ -627,7 +663,22 @@
     work?.addEventListener('click', () => show('work'));
     document.addEventListener('notch:tabchange', (event) => {
       if (event.detail?.tab === 'todo') show('enter-todo');
+      if (event.detail?.tab === 'home') renderHomeColumns();
     });
+    const dashboard = document.getElementById('home-bento');
+    const homeWork = document.getElementById('home-work-view');
+    const dashboardButton = document.getElementById('home-view-dashboard');
+    const homeWorkButton = document.getElementById('home-view-work');
+    function showHome(which) {
+      const useWork = which === 'work';
+      if (dashboard) dashboard.hidden = useWork;
+      if (homeWork) homeWork.hidden = !useWork;
+      dashboardButton?.setAttribute('aria-selected', useWork ? 'false' : 'true');
+      homeWorkButton?.setAttribute('aria-selected', useWork ? 'true' : 'false');
+      if (useWork) render();
+    }
+    dashboardButton?.addEventListener('click', () => showHome('dashboard'));
+    homeWorkButton?.addEventListener('click', () => showHome('work'));
     show('startup');
 
     document.getElementById('work-new-group')?.addEventListener('keydown', (event) => {
