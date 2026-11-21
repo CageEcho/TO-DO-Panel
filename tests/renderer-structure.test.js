@@ -13,6 +13,35 @@ test('clipboard rows define both favorite icons before rendering entries', () =>
   assert.match(appJs, /const starFilledSvg\s*=/);
 });
 
+test('todo page keeps the classic matrix and adds a separate work view', () => {
+  assert.match(html, /id="todo-view-work"[^>]*>工作</);
+  assert.match(html, /id="todo-view-categories"[^>]*>分类待办</);
+  assert.match(html, /id="todo-work-columns-view"/);
+  assert.equal(html.includes('原四象限'), false);
+  assert.equal(html.includes('id="todo-classic-view"'), false);
+  assert.equal(html.includes('id="home-view-work"'), false);
+  assert.equal(html.includes('id="home-work-view"'), false);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8'), /notch-todo-data/);
+  assert.equal(html.includes('id="work-review-rail"'), false);
+  assert.equal(html.includes('还没有工作待办'), false);
+  assert.match(html, /id="todo-work-view"/);
+  assert.equal(html.includes('把 grok-work/v1 JSON 放进'), false);
+  assert.match(html, /id="work-board"/);
+  assert.match(html, /id="settings-ticnote-card"/);
+  assert.match(html, /id="settings-grok-card"/);
+  assert.match(html, /id="settings-bailian-card"/);
+  assert.match(html, /placeholder="https:\/\/dashscope\.aliyuncs\.com\/compatible-mode\/v1"/);
+  assert.match(html, /https:\/\/api\.x\.ai\/v1\/chat\/completions/);
+  assert.equal(html.includes('周一15:00'), false);
+  assert.match(html, /id="work-source-enabled"/);
+  assert.match(html, /src="work-domain\.js"/);
+  assert.match(appJs, /routeTodoInboxPayload/);
+  const workJs = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'work.js'), 'utf8');
+  assert.equal(workJs.includes('getUserMedia'), false);
+  assert.equal(workJs.includes("setItem('notch-todo-data'"), false);
+  assert.equal(workJs.includes('setItem("notch-todo-data"'), false);
+});
+
 test('notes have a dedicated top-level tab and management panel', () => {
   assert.match(html, /data-tab="notes"/);
   assert.match(html, /id="tab-notes"/);

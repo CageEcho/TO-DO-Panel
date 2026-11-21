@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "root": "<WORK_ROOT>",
+  "readyBy": "09:00",
+  "leadMinutes": 60,
+  "weekdaysOnly": true,
+  "timezone": "Asia/Shanghai",
+  "enabled": false,
+  "acceptedLocally": false
+}

@@ -1806,6 +1806,10 @@
   });
   settingsWorkspaceChoose?.addEventListener('click', async () => {
     const changed = await window.notchAPI?.chooseWorkspace?.().catch(() => false);
+    if (changed === 'official-protected') {
+      setSettingsNote('不能使用官方 TO-DO Panel 的 Dynamic Panel 数据目录。请另选文件夹，避免覆盖原版数据。', true);
+      return;
+    }
     if (!changed) return;
     settingsWorkspace = await window.notchAPI?.getWorkspace?.().catch(() => settingsWorkspace);
     renderSettingsPanel();

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  可选示例。应用不会复制或加载这个文件。
+  不要把它放进 ~/Library/LaunchAgents，除非你自己决定启用。
+  它只运行日程判断脚本，不生成待办，不读取录音，不联网。
+  Mac 睡眠、合盖或关机时，launchd 可能推迟或跳过；错过的文件要等 TO-DO Panel Work
+  下次打开后，由 todo-inbox 补处理。关机期间不能写入本机待办。
+  把 CHANGE_ME 换成你自己的路径。默认不要启用。
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.cageecho.todo-panel-work.schedule-example</string>
+    <key>Disabled</key>
+    <true/>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/bin/env</string>
+      <string>node</string>
+      <string>CHANGE_ME/scripts/work-source-prepare.js</string>
+      <string>--root</string>
+      <string>CHANGE_ME_WORK_ROOT</string>
+      <string>--out</string>
+      <string>CHANGE_ME/work-materials</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>8</integer>
+      <key>Minute</key>
+      <integer>30</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+  </dict>
+</plist>

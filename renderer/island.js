@@ -32,6 +32,7 @@ const SOURCE_NAMES = { codex: 'Codex', claude: 'Claude', gpt: 'GPT', chatgpt: 'G
 
 let metrics = { mode: 'hidden' };
 let tools = [];
+let ticnoteStatus = { configured: false, folderCount: 0, dailyTasksEnabled: false };
 let peekRequested = false;
 let openTimer = null;
 let closeTimer = null;
@@ -175,7 +176,11 @@ function renderPeek() {
     }
     return block;
   });
-  peekElement.replaceChildren(...blocks);
+  const note = element('p', 'peek-ticnote');
+  note.textContent = ticnoteStatus.folderCount
+    ? `TicNote 已选 ${ticnoteStatus.folderCount} 个文件夹，每日任务仍关闭`
+    : 'TicNote 未选工作文件夹';
+  peekElement.replaceChildren(...blocks, note);
 }
 
 function renderUsage() {
@@ -407,6 +412,7 @@ window.addEventListener('blur', () => reportAlertHover(false));
 api.onLayout(applyLayout);
 api.onUsage((usage) => {
   tools = usage && Array.isArray(usage.tools) ? usage.tools : [];
+  ticnoteStatus = usage && usage.ticnote ? usage.ticnote : ticnoteStatus;
   renderUsage();
 });
 api.onTaskNotification(showAlert);

@@ -1481,19 +1481,27 @@ function applyTodoInboxImport(message) {
 
 function startTodoInbox() {
   if (!window.notchAPI?.onTodoInboxImport || !window.notchAPI?.todoInboxReady) return;
-  window.notchAPI.onTodoInboxImport(async (message) => {
-    if (!message || typeof message.token !== 'string') return;
-    let result;
-    try {
-      result = applyTodoInboxImport(message);
-    } catch (error) {
-      // 意外异常时不归档；稍后重试时稳定 id 会挡住已写入的条目。
-      result = { retry: true };
-    }
-    if (result.imported?.length) {
-      await window.notchAPI.saveWorkspaceData(collectLocalStorageSnapshot()).catch(() => {});
-    }
-    window.notchAPI.completeTodoInbox(message.token, result).catch(() => {});
+  // 同一轮扫描可能投递多个文件。串行合并，避免两份导入同时改同一份待办。
+  let chain = Promise.resolve();
+  window.notchAPI.onTodoInboxImport((message) => {
+    chain = chain.then(async () => {
+      if (!message || typeof message.token !== 'string') return;
+      let result;
+      try {
+        if (window.NotchWorkDomain?.routeTodoInboxPayload(message.payload) === 'work' && window.NotchWork?.applyImport) {
+          result = await window.NotchWork.applyImport(message);
+        } else {
+          result = applyTodoInboxImport(message);
+        }
+      } catch (error) {
+        // 意外异常时不归档；稍后重试时稳定 id 会挡住已写入的条目。
+        result = { retry: true };
+      }
+      if ((result.imported?.length || result.changed) && !result.retry) {
+        await window.notchAPI.saveWorkspaceData(collectLocalStorageSnapshot()).catch(() => {});
+      }
+      window.notchAPI.completeTodoInbox(message.token, result).catch(() => {});
+    }).catch(() => {});
   });
   window.notchAPI.todoInboxReady().catch(() => {});
 }

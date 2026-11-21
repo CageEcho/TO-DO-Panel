@@ -7,7 +7,7 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TO-DO Panel</title>
+    <title>TO-DO Panel Work</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -226,86 +226,32 @@
           </section>
 
           <section id="tab-todo" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-todo" aria-hidden="true" inert>
-            <div class="sections">
-              <section class="quadrant tile" data-priority="P0">
-                <div class="quadrant-header">
-                  <span class="dot dot-p0"></span>
-                  <input class="todo-category-name" data-category="P0" value="课程" maxlength="24" aria-label="修改待办分类名称" />
-                  <button class="bulk-delete todo-bulk-delete" type="button" data-bulk-priority="P0" hidden>删除</button>
-                  <span class="count" data-priority="P0">0</span>
-                </div>
-                <ul class="todo-list" data-priority="P0"></ul>
-                <div class="add-row">
-                  <input
-                    type="text"
-                    placeholder="添加待办，回车保存…"
-                    aria-label="添加课程待办"
-                    data-priority="P0"
-                    maxlength="80"
-                  />
-                  <button class="todo-deadline-trigger" type="button" data-deadline-priority="P0" aria-label="选择课程待办截止时间"><span>日期</span></button>
-                </div>
-              </section>
-
-              <section class="quadrant tile" data-priority="P1">
-                <div class="quadrant-header">
-                  <span class="dot dot-p1"></span>
-                  <input class="todo-category-name" data-category="P1" value="自媒体&amp;写作" maxlength="24" aria-label="修改待办分类名称" />
-                  <button class="bulk-delete todo-bulk-delete" type="button" data-bulk-priority="P1" hidden>删除</button>
-                  <span class="count" data-priority="P1">0</span>
-                </div>
-                <ul class="todo-list" data-priority="P1"></ul>
-                <div class="add-row">
-                  <input
-                    type="text"
-                    placeholder="添加待办，回车保存…"
-                    aria-label="添加自媒体和写作待办"
-                    data-priority="P1"
-                    maxlength="80"
-                  />
-                  <button class="todo-deadline-trigger" type="button" data-deadline-priority="P1" aria-label="选择自媒体待办截止时间"><span>日期</span></button>
-                </div>
-              </section>
-
-              <section class="quadrant tile" data-priority="P2">
-                <div class="quadrant-header">
-                  <span class="dot dot-p2"></span>
-                  <input class="todo-category-name" data-category="P2" value="Vibe coding" maxlength="24" aria-label="修改待办分类名称" />
-                  <button class="bulk-delete todo-bulk-delete" type="button" data-bulk-priority="P2" hidden>删除</button>
-                  <span class="count" data-priority="P2">0</span>
-                </div>
-                <ul class="todo-list" data-priority="P2"></ul>
-                <div class="add-row">
-                  <input
-                    type="text"
-                    placeholder="添加待办，回车保存…"
-                    aria-label="添加 Vibe coding 待办"
-                    data-priority="P2"
-                    maxlength="80"
-                  />
-                  <button class="todo-deadline-trigger" type="button" data-deadline-priority="P2" aria-label="选择 Vibe coding 待办截止时间"><span>日期</span></button>
-                </div>
-              </section>
-
-              <section class="quadrant tile" data-priority="P3">
-                <div class="quadrant-header">
-                  <span class="dot dot-p3"></span>
-                  <input class="todo-category-name" data-category="P3" value="日常" maxlength="24" aria-label="修改待办分类名称" />
-                  <button class="bulk-delete todo-bulk-delete" type="button" data-bulk-priority="P3" hidden>删除</button>
-                  <span class="count" data-priority="P3">0</span>
-                </div>
-                <ul class="todo-list" data-priority="P3"></ul>
-                <div class="add-row">
-                  <input
-                    type="text"
-                    placeholder="添加待办，回车保存…"
-                    aria-label="添加日常待办"
-                    data-priority="P3"
-                    maxlength="80"
-                  />
-                  <button class="todo-deadline-trigger" type="button" data-deadline-priority="P3" aria-label="选择日常待办截止时间"><span>日期</span></button>
-                </div>
-              </section>
+            <div class="todo-view-switch" role="tablist" aria-label="待办视图">
+              <button id="todo-view-work" type="button" role="tab" aria-selected="true" aria-controls="todo-work-columns-view">工作</button>
+              <button id="todo-view-categories" type="button" role="tab" aria-selected="false" aria-controls="todo-work-view">分类待办</button>
+            </div>
+            <div class="home-work-view" id="todo-work-columns-view">
+              <div class="home-work-columns" id="home-work-columns"></div>
+            </div>
+            <div class="work-view" id="todo-work-view" hidden>
+              <div class="work-board" id="work-board"></div>
+              <div class="work-drawer" id="work-drawer" hidden></div>
+              <div class="todo-date-popover work-date-popover" id="work-date-popover" hidden>
+                <section class="todo-editor-card" role="group" aria-label="工作待办截止时间">
+                  <header class="todo-calendar-head">
+                    <button id="work-calendar-previous" type="button" aria-label="上个月">‹</button>
+                    <span id="work-calendar-month"></span>
+                    <button id="work-calendar-next" type="button" aria-label="下个月">›</button>
+                  </header>
+                  <div class="todo-calendar-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+                  <div class="todo-calendar-grid" id="work-calendar-grid"></div>
+                  <div class="todo-time-row">
+                    <button id="work-calendar-clear" type="button">不设置</button>
+                    <select id="work-calendar-hour" aria-label="小时"></select>
+                    <select id="work-calendar-minute" aria-label="分钟"></select>
+                  </div>
+                </section>
+              </div>
             </div>
           </section>
 
@@ -432,6 +378,133 @@
                     <label><span><b>密钥</b><small>本机安全存储</small></span><input type="checkbox" data-settings-feature="credentials" aria-label="显示密钥" /><i aria-hidden="true"></i></label>
                     <label><span><b>剪贴板</b><small>默认关闭</small></span><input type="checkbox" data-settings-feature="clip" aria-label="显示剪贴板" /><i aria-hidden="true"></i></label>
                   </div>
+                </section>
+
+                <section class="tile settings-card settings-work-card" id="settings-work-card">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">工作导入</span><strong>转写与上班前整理</strong></div>
+                    <small>默认关闭</small>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>读取转写文件夹</span><strong id="work-source-path">未选择</strong></div>
+                    <input id="work-source-enabled" type="checkbox" aria-label="启用已选转写文件夹" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <div class="settings-device-row">
+                    <div><span>文本与录音</span><strong id="work-source-count">尚未读取</strong></div>
+                    <span class="settings-device-actions">
+                      <button id="work-source-choose" type="button">选择文件夹…</button>
+                      <button id="work-source-refresh" type="button">刷新</button>
+                    </span>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>工作日准备完成</span><strong>Asia/Shanghai，默认 09:00 前</strong></div>
+                    <input id="work-schedule-time" type="time" value="09:00" aria-label="工作待办准备完成时间" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>提前开始</span><strong id="work-schedule-prepare">默认提前 60 分钟</strong></div>
+                    <input id="work-schedule-lead" type="number" min="0" max="720" value="60" aria-label="提前分钟数" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>只在工作日</span><strong>周六周日不提醒</strong></div>
+                    <input id="work-schedule-weekdays" type="checkbox" checked aria-label="只在工作日检查" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>本机端到端已验收</span><strong>未验收时不能自动运行</strong></div>
+                    <input id="work-schedule-accepted" type="checkbox" aria-label="本机端到端已经验收" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>到点后标记待提交</span><strong>不生成任务</strong></div>
+                    <input id="work-schedule-enabled" type="checkbox" aria-label="启用每日检查" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <p class="settings-inline-note" id="work-settings-note">日常在工作页直接输入即可，不用写 JSON。grok-work/v1 只留给以后的自动导入。目标仍是每个工作日 09:00 前准备好，提前量默认 60 分钟。自动检查保持关闭。本机只递归已授权的桌面文件夹；TicNote 只在你之后指定的工作文件夹里读取获准录音，不会扩大到其他目录或飞书。</p>
+                </section>
+
+                <section class="tile settings-card" id="settings-ticnote-card">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">TicNote</span><strong>只读录音来源</strong></div>
+                    <small id="ticnote-status-label">未连接</small>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>国内正式 AppKey</span><strong>只保存在本机加密存储</strong></div>
+                    <input id="ticnote-appkey" type="password" maxlength="240" autocomplete="off" spellcheck="false" aria-label="TicNote AppKey" placeholder="tncn_sk_…" />
+                  </label>
+                  <div class="settings-device-row">
+                    <div><span>连接</span><strong id="ticnote-connection">尚未验证</strong></div>
+                    <span class="settings-device-actions">
+                      <button id="ticnote-save" type="button">保存密钥</button>
+                      <button id="ticnote-verify" type="button">验证并读取项目</button>
+                      <button id="ticnote-clear" type="button">清除</button>
+                    </span>
+                  </div>
+                  <div class="ticnote-picker" id="ticnote-projects"></div>
+                  <div class="ticnote-picker" id="ticnote-folders"></div>
+                  <p class="settings-inline-note">密钥在 https://www.ticnote.cn 账户设置里创建。这里只连接 voice-api.ticnote.cn，不使用海外或测试环境。验证时只读取项目名称和文件数。勾选项目后才能看到该项目的文件夹；勾选文件夹才允许读取其中直接包含的已有转写。父文件夹不包含子文件夹，同名文件夹也不会被自动选中。未选择文件夹时不取正文、音频或转写。保存选择后，每日任务仍然关闭。</p>
+                </section>
+
+                <section class="tile settings-card" id="settings-grok-card">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">Grok API</span><strong>上班前整理</strong></div>
+                    <small id="grok-enabled-label">默认关闭</small>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>xAI API Key</span><strong>只保存在本机加密存储</strong></div>
+                    <input id="grok-api-key" type="password" maxlength="300" autocomplete="off" spellcheck="false" aria-label="Grok API Key" placeholder="留空则不保存" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>模型 ID</span><strong id="grok-model-label">未填写，不假定某个模型可用</strong></div>
+                    <input id="grok-model" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-label="Grok 模型 ID" placeholder="从 xAI 控制台复制模型 ID" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>启用提取</span><strong id="grok-call-status">未启用，不会访问 api.x.ai</strong></div>
+                    <input id="grok-enabled" type="checkbox" aria-label="启用后把获准转写发送到 api.x.ai" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <div class="settings-device-row">
+                    <div><span>手动整理</span><strong>只处理已指定的 TicNote 文件夹</strong></div>
+                    <span class="settings-device-actions">
+                      <button id="grok-save" type="button">保存</button>
+                      <button id="grok-extract" type="button">整理一次</button>
+                      <button id="grok-clear" type="button">清除</button>
+                    </span>
+                  </div>
+                  <p class="settings-inline-note">请求只发到 https://api.x.ai/v1/chat/completions。启用后，已授权文件夹里的转写文本会送去 xAI，按该账户的 token 用量计费。这不是当前聊天订阅，也不是 TicNote 或百炼的密钥。缺密钥、缺模型或没有勾选启用时不会出网。每日 09:00 前的自动整理仍要等本机验收后另开，现在保持关闭。</p>
+                </section>
+
+                <section class="tile settings-card" id="settings-bailian-card">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">阿里云百炼</span><strong>可选提取接口</strong></div>
+                    <small id="bailian-enabled-label">默认关闭</small>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>Base URL</span><strong id="bailian-base-label">未保存。占位不是唯一地址</strong></div>
+                    <input id="bailian-base-url" type="url" maxlength="240" autocomplete="off" spellcheck="false" aria-label="百炼 Base URL" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>API Key</span><strong>只保存在本机加密存储</strong></div>
+                    <input id="bailian-api-key" type="password" maxlength="300" autocomplete="off" spellcheck="false" aria-label="百炼 API Key" placeholder="留空则不保存" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>模型 ID</span><strong id="bailian-model-label">未填写，不假定某个模型可用</strong></div>
+                    <input id="bailian-model" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-label="百炼模型 ID" placeholder="从百炼控制台复制模型 ID" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>启用提取</span><strong id="bailian-call-status">未启用，不会访问百炼</strong></div>
+                    <input id="bailian-enabled" type="checkbox" aria-label="启用后把获准转写发送到百炼兼容接口" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <div class="settings-device-row">
+                    <div><span>手动整理</span><strong>与 xAI 分开，只处理已指定的 TicNote 文件夹</strong></div>
+                    <span class="settings-device-actions">
+                      <button id="bailian-save" type="button">保存</button>
+                      <button id="bailian-extract" type="button">用百炼整理一次</button>
+                      <button id="bailian-clear" type="button">清除</button>
+                    </span>
+                  </div>
+                  <p class="settings-inline-note">按阿里云百炼 OpenAI 兼容模式调用：在你填写的 Base URL 后追加 /chat/completions，请求头为 Authorization: Bearer。输入框占位是 https://dashscope.aliyuncs.com/compatible-mode/v1，也可以改成业务空间域名 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1，或国际站 https://dashscope-intl.aliyuncs.com/compatible-mode/v1。只接受这些官方 HTTPS 主机上的 compatible-mode/v1，遇到重定向会停止。缺 Base URL、密钥、模型或没有勾选启用时不会出网。这不是当前聊天订阅，也不是上面的 xAI 密钥。启用后按百炼账号的 token 用量计费。每日自动整理仍然关闭。</p>
                 </section>
 
                 <section class="tile settings-card settings-home-modules-card">
@@ -579,6 +652,8 @@
     </div>
     <script src="../platform.js"></script>
     <script src="domain.js"></script>
+    <script src="work-domain.js"></script>
+    <script src="work.js"></script>
     <script src="effects.js"></script>
     <script src="app.js"></script>
     <script src="workspace.js"></script>

@@ -19,6 +19,7 @@ const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const dns = require('dns');
 const zlib = require('zlib');
 const crypto = require('crypto');
@@ -52,12 +53,20 @@ const {
   parseTodoInboxBuffer,
   todoInboxArchiveNames,
   buildTodoInboxReport,
+  isOfficialPanelDataPath,
+  listTranscriptFolder,
+  backupWorkStateFile,
+  writeAtomicFile,
   hoverSpacePollingPolicy,
   reduceClipboardObservation,
   normalizeDefaultTabPreference,
   updateDefaultTabPreference,
   createForegroundMediaPermissionCoordinator,
 } = require('./main-services');
+const { publicWorkSchedule } = require('./renderer/work-domain');
+const { createTicnoteSession, createGrokConfig, createBailianConfig, CHINA_ORIGIN } = require('./main/ticnote');
+const { normalizeBailianBase } = require('./main/grok-extract');
+const { planInboxWrite } = require('./scripts/grok-work-import');
 const { createAgentUsageMonitor } = require('./main/agent-usage');
 const { createNotchGeometry } = require('./main/notch-geometry');
 const { createMusicPlayers, normalizeMusicPreference } = require('./main/music-players');
@@ -67,12 +76,13 @@ const {
   permissionSettingsUrl,
 } = require('./main/permissions');
 
-// Keep the historical data directory so upgrading users retain notes, links,
-// recordings and encrypted settings after the public product rename.
-const LEGACY_USER_DATA_PATH = path.join(app.getPath('appData'), 'Dynamic Panel');
-app.setName('TO-DO Panel');
+// 定制版使用单独的应用名和数据目录，避免覆盖已安装的官方 TO-DO Panel
+// 及其 ~/Library/Application Support/Dynamic Panel（Windows 为 %APPDATA%\Dynamic Panel）。
+const OFFICIAL_APP_DATA = app.getPath('appData');
+const WORK_USER_DATA_PATH = path.join(OFFICIAL_APP_DATA, 'TO-DO Panel Work');
+app.setName('TO-DO Panel Work');
 // Honor Electron's standard profile switch for isolated automated tests.
-app.setPath('userData', app.commandLine.getSwitchValue('user-data-dir') || LEGACY_USER_DATA_PATH);
+app.setPath('userData', app.commandLine.getSwitchValue('user-data-dir') || WORK_USER_DATA_PATH);
 
 // ============ 托盘图标 PNG 生成 ============
 // 直接在主进程编码 PNG，避免引入额外资源文件
@@ -259,7 +269,8 @@ const TASK_NOTIFICATION_DEDUPE_MS = 2000;
 const TASK_NOTIFICATION_MAX_QUEUE = 5;
 const TASK_NOTIFICATION_BODY_LIMIT = 64 * 1024;
 const TASK_NOTIFICATION_HOST = '127.0.0.1';
-const TASK_NOTIFICATION_PORT = 43821;
+// 官方应用继续占用 43821。定制版改用 43831，避免两个应用抢同一个本机端口。
+const TASK_NOTIFICATION_PORT = 43831;
 // /notify/<source> 的来源白名单：只放行已知 Agent，其余一律 404。
 const TASK_NOTIFICATION_SOURCES = new Set(['codex', 'gpt', 'claude']);
 const TODO_REMINDER_LEAD_MS = 60 * 60 * 1000;
@@ -859,6 +870,7 @@ function sendIslandUsage() {
   islandWindow.webContents.send('island:usage', {
     tools: islandTools(),
     updatedAt: usageSnapshot.updatedAt,
+    ticnote: safeTicnoteStatus(),
   });
 }
 
@@ -1419,7 +1431,10 @@ function workspaceRoot() {
   if (cachedWorkspaceRoot) return cachedWorkspaceRoot;
   const settings = readJsonFile(getJsonSettingsPath(WORKSPACE_SETTINGS_FILE));
   const configured = String(settings.path || '').trim();
-  cachedWorkspaceRoot = configured && path.isAbsolute(configured) ? configured : app.getPath('userData');
+  const usesOfficialData = configured && isOfficialPanelDataPath(configured, OFFICIAL_APP_DATA);
+  cachedWorkspaceRoot = configured && path.isAbsolute(configured) && !usesOfficialData
+    ? configured
+    : app.getPath('userData');
   return cachedWorkspaceRoot;
 }
 
@@ -1470,11 +1485,12 @@ function copyWorkspaceAssets(sourceRoot, targetRoot) {
 
 async function chooseWorkspaceFolder() {
   const result = await showOwnedOpenDialog({
-    title: '选择 TO-DO Panel 数据文件夹',
+    title: '选择 TO-DO Panel Work 数据文件夹',
     properties: ['openDirectory', 'createDirectory'],
   });
   const selected = !result.canceled && result.filePaths && result.filePaths[0];
   if (!selected) return false;
+  if (isOfficialPanelDataPath(selected, OFFICIAL_APP_DATA)) return 'official-protected';
   const previousRoot = workspaceRoot();
   copyWorkspaceAssets(previousRoot, selected);
   if (!writeJsonFile(getJsonSettingsPath(WORKSPACE_SETTINGS_FILE), { path: selected })) return false;
@@ -1684,16 +1700,16 @@ function refreshTrayMenu() {
       click: () => {
         dialog.showMessageBox({
           type: 'info',
-          title: '关于 TO-DO Panel',
-          message: 'TO-DO Panel',
+          title: '关于 TO-DO Panel Work',
+          message: 'TO-DO Panel Work',
           detail:
-            `版本 ${app.getVersion()}\n\n一个开源、常驻屏幕顶部的本地工作台。工作区数据默认保存在本机；账号密码与 API Key 由系统安全存储加密。\n\nMIT License`,
+            `版本 ${app.getVersion()}\n\n基于 xiaopu-ai TO-DO Panel 的个人工作版，保留 MIT 许可。数据目录与官方应用分开，不会写入 Dynamic Panel。\n\n账号密码与 API Key 由系统安全存储加密。`,
           buttons: ['查看 GitHub', '好'],
           defaultId: 1,
           cancelId: 1,
           noLink: true,
         }).then(({ response }) => {
-          if (response === 0) shell.openExternal('https://github.com/xiaopu-ai/TO-DO-Panel');
+          if (response === 0) shell.openExternal('https://github.com/CageEcho/TO-DO-Panel');
         });
       },
     },
@@ -1709,7 +1725,7 @@ function refreshTrayMenu() {
 
 function createTray() {
   tray = new Tray(createNotchTrayIcon());
-  tray.setToolTip('TO-DO Panel');
+  tray.setToolTip('TO-DO Panel Work');
   tray.on('click', () => {
     if (!mainWindow) return;
     if (!mainWindow.isVisible()) {
@@ -1921,6 +1937,7 @@ function scanTodoInbox() {
       token,
       fileName: name,
       sourceId: parsed.hash.slice(0, 12),
+      fileHash: parsed.hash,
       payload: parsed.payload,
     });
   }
@@ -1965,6 +1982,331 @@ ipcMain.handle('todo-inbox:complete', (event, token, result) => {
   } catch (error) {}
   finishTodoInboxFile(job.filePath, job.hash, buildTodoInboxReport({ fileName: job.fileName, result }));
   return true;
+});
+
+function isMainWindowSender(event) {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents);
+}
+
+ipcMain.handle('work:backup-state', (event, jsonText) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return backupWorkStateFile(workspacePath('work-import-backups'), jsonText, new Date(), { appData: OFFICIAL_APP_DATA });
+});
+
+ipcMain.handle('work:publish-schedule', (event, schedule) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const published = publicWorkSchedule(schedule);
+  const written = writeAtomicFile(workspacePath('work-schedule.json'), JSON.stringify(published, null, 2));
+  return written ? { ok: true, schedule: published } : { ok: false, error: 'write' };
+});
+
+ipcMain.handle('work:choose-transcript-folder', async (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = await showOwnedOpenDialog({
+    title: '选择转写文件夹',
+    properties: ['openDirectory'],
+  });
+  const selected = !result.canceled && result.filePaths && result.filePaths[0];
+  if (!selected) return { ok: false, error: 'cancelled' };
+  if (isOfficialPanelDataPath(selected, OFFICIAL_APP_DATA)) return { ok: false, error: 'official_data_dir' };
+  const home = app.getPath('home');
+  const listed = listTranscriptFolder(selected, { appData: OFFICIAL_APP_DATA, home, maxFiles: 1 });
+  if (!listed.ok && listed.error === 'folder_too_broad') return { ok: false, error: 'folder_too_broad' };
+  return { ok: true, path: path.resolve(selected) };
+});
+
+ipcMain.handle('work:list-transcripts', (event, folder) => {
+  if (!isMainWindowSender(event) || typeof folder !== 'string') return { ok: false, error: 'sender' };
+  return listTranscriptFolder(folder, { appData: OFFICIAL_APP_DATA, home: app.getPath('home') });
+});
+
+function readPrivateJson(name) {
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), name), 'utf8'));
+    return value && typeof value === 'object' ? value : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function writePrivateJson(name, value) {
+  const file = path.join(app.getPath('userData'), name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const text = JSON.stringify(value);
+  if (/tncn_sk_|tnovs_sk_|Bearer\s+[A-Za-z0-9._~+/-]{8,}/.test(text)) return;
+  fs.writeFileSync(file, text, { mode: 0o600 });
+}
+
+function ticnoteTransport(request) {
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL(request.url); } catch (error) { resolve({ status: 0, body: '' }); return; }
+    if (url.origin !== CHINA_ORIGIN) { resolve({ status: 0, body: '' }); return; }
+    const req = https.request({
+      hostname: url.hostname,
+      path: `${url.pathname}${url.search}`,
+      method: request.method || 'GET',
+      headers: request.headers,
+      timeout: 15000,
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 1500000) chunks.push(chunk);
+      });
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: { location: res.headers.location || '' },
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: '' }); });
+    if (request.body) req.write(request.body);
+    req.end();
+  });
+}
+
+let ticnoteApi = null;
+let grokApi = null;
+
+function ticnoteService() {
+  if (!ticnoteApi) {
+    ticnoteApi = createTicnoteSession({
+      load: () => readPrivateJson('ticnote-connection.json'),
+      save: (value) => writePrivateJson('ticnote-connection.json', value),
+      encrypt: (value) => (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value).toString('base64') : ''),
+      decrypt: (value) => decryptStoredSecret(value),
+      transport: ticnoteTransport,
+      log: (line) => console.log(String(line).slice(0, 240)),
+    });
+  }
+  return ticnoteApi;
+}
+
+function bailianService() {
+  if (!bailianApi) {
+    bailianApi = createBailianConfig({
+      load: () => readPrivateJson('bailian-connection.json'),
+      save: (value) => writePrivateJson('bailian-connection.json', value),
+      encrypt: (value) => (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value).toString('base64') : ''),
+      decrypt: (value) => decryptStoredSecret(value),
+      log: (line) => console.log(String(line).slice(0, 240)),
+    });
+  }
+  return bailianApi;
+}
+
+let bailianApi = null;
+
+function grokService() {
+  if (!grokApi) {
+    grokApi = createGrokConfig({
+      load: () => readPrivateJson('grok-connection.json'),
+      save: (value) => writePrivateJson('grok-connection.json', value),
+      encrypt: (value) => (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value).toString('base64') : ''),
+      decrypt: (value) => decryptStoredSecret(value),
+      log: (line) => console.log(String(line).slice(0, 240)),
+    });
+  }
+  return grokApi;
+}
+
+function safeTicnoteStatus() {
+  try {
+    if (!app.isReady()) return { configured: false, folderCount: 0, scheduleEnabled: false, dailyTasksEnabled: false };
+    return ticnoteService().status();
+  } catch (error) {
+    return { configured: false, folderCount: 0, scheduleEnabled: false, dailyTasksEnabled: false };
+  }
+}
+
+ipcMain.handle('ticnote:status', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return { ok: true, status: ticnoteService().status() };
+});
+ipcMain.handle('ticnote:save-key', (event, appkey) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = ticnoteService().saveKey(typeof appkey === 'string' ? appkey : '');
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('ticnote:clear-key', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = ticnoteService().clearKey();
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('ticnote:verify', async (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = await ticnoteService().verify();
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('ticnote:save-scope', (event, scope) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = ticnoteService().saveScope(scope);
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('ticnote:list-folders', async (event, projectId) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return ticnoteService().listFolders(projectId);
+});
+ipcMain.handle('grok:status', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return { ok: true, status: grokService().status() };
+});
+ipcMain.handle('grok:save-key', (event, apiKey) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return grokService().saveKey(typeof apiKey === 'string' ? apiKey : '');
+});
+ipcMain.handle('grok:clear-key', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return grokService().clearKey();
+});
+ipcMain.handle('grok:save-model', (event, model) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return grokService().saveModel(model);
+});
+ipcMain.handle('grok:set-enabled', (event, enabled) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const result = grokService().setEnabled(enabled === true);
+  sendIslandUsage();
+  return result;
+});
+ipcMain.handle('grok:extract', async (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const prep = await grokService().extractFromPull(
+    (options) => ticnoteService().pullTranscripts(options),
+    { transport: xaiTransport },
+  );
+  return finishModelExtract(prep);
+});
+
+function xaiTransport(request) {
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL(request.url); } catch (error) { resolve({ status: 0, body: '' }); return; }
+    if (url.origin !== 'https://api.x.ai' || url.pathname !== '/v1/chat/completions' || url.search) {
+      resolve({ status: 0, body: '' });
+      return;
+    }
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'POST',
+      headers: request.headers,
+      timeout: 30000,
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 200000) chunks.push(chunk);
+      });
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: { location: res.headers.location || '' },
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, error: 'timeout', body: '' }); });
+    if (request.body) req.write(request.body);
+    req.end();
+  });
+}
+
+function bailianTransport(request) {
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL(request.url); } catch (error) { resolve({ status: 0, body: '' }); return; }
+    const base = normalizeBailianBase(url.origin + url.pathname.replace(/\/chat\/completions$/, ''));
+    if (!base.ok || url.toString() !== base.chatUrl || url.search) {
+      resolve({ status: 0, body: '' });
+      return;
+    }
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'POST',
+      headers: request.headers,
+      timeout: 30000,
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 200000) chunks.push(chunk);
+      });
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: { location: res.headers.location || '' },
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, error: 'timeout', body: '' }); });
+    if (request.body) req.write(request.body);
+    req.end();
+  });
+}
+
+async function finishModelExtract(prep) {
+  if (!prep.ok || !prep.payload) return { ok: false, reason: prep.reason || 'extract_failed', network: prep.network === true };
+  ensureTodoInboxDir();
+  const plan = planInboxWrite({
+    inboxDir: workspacePath('todo-inbox'),
+    payload: prep.payload,
+    appData: OFFICIAL_APP_DATA,
+    now: new Date(),
+  });
+  if (!plan.ok) return { ok: false, reason: 'inbox_rejected', network: true };
+  const written = writeAtomicFile(path.join(plan.inbox, plan.fileName), JSON.stringify(prep.payload));
+  if (!written) return { ok: false, reason: 'inbox_write_failed', network: true };
+  ticnoteService().commitWatermark(prep.watermarkPatch || {});
+  return {
+    ok: true,
+    network: true,
+    imported: plan.preview.imported,
+    skipped: plan.preview.skipped,
+    scheduleEnabled: false,
+  };
+}
+
+ipcMain.handle('bailian:status', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return { ok: true, status: bailianService().status() };
+});
+ipcMain.handle('bailian:save-key', (event, apiKey) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().saveKey(typeof apiKey === 'string' ? apiKey : '');
+});
+ipcMain.handle('bailian:save-base', (event, baseUrl) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().saveBaseUrl(typeof baseUrl === 'string' ? baseUrl : '');
+});
+ipcMain.handle('bailian:save-model', (event, model) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().saveModel(model);
+});
+ipcMain.handle('bailian:set-enabled', (event, enabled) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().setEnabled(enabled === true);
+});
+ipcMain.handle('bailian:clear', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().clearKey();
+});
+ipcMain.handle('bailian:extract', async (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const prep = await bailianService().extractFromPull(
+    (options) => ticnoteService().pullTranscripts(options),
+    { transport: bailianTransport },
+  );
+  return finishModelExtract(prep);
 });
 
 function getLayoutMetrics(display) {

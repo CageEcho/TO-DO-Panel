@@ -1,5 +1,6 @@
 const net = require('net');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 
 function isPrivateAddress(address) {
@@ -655,6 +656,425 @@ async function controlSodaMusic(action, dependencies = {}, currentPlaying = fals
   return { ok: true, running: true, playing, bootstrapped };
 }
 
+// 定制版不得写入官方 TO-DO Panel 的数据目录（macOS / Windows 都叫 Dynamic Panel）。
+function isOfficialPanelDataPath(candidate, appData) {
+  if (!candidate || !appData) return false;
+  const official = path.resolve(appData, 'Dynamic Panel');
+  let target;
+  try {
+    target = path.resolve(String(candidate));
+  } catch (error) {
+    return false;
+  }
+  return target === official || target.startsWith(official + path.sep);
+}
+
+function isBroadTranscriptFolder(folder, { home, appData, root } = {}) {
+  let resolved;
+  try {
+    resolved = path.resolve(String(folder || ''));
+  } catch (error) {
+    return true;
+  }
+  const filesystemRoot = root || path.parse(resolved).root;
+  if (resolved === path.resolve(filesystemRoot)) return true;
+  if (home && resolved === path.resolve(home)) return true;
+  if (appData && (resolved === path.resolve(appData) || isOfficialPanelDataPath(resolved, appData))) return true;
+  return false;
+}
+
+function writeAtomicFile(filePath, contents, mode = 0o600) {
+  const directory = path.dirname(filePath);
+  const base = path.basename(filePath);
+  if (!base || base === '.' || base === '..' || base !== path.basename(base)) return false;
+  const temporary = path.join(directory, `.${base}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(temporary, contents, { mode });
+    fs.renameSync(temporary, filePath);
+    return true;
+  } catch (error) {
+    try { fs.unlinkSync(temporary); } catch (unlinkError) {}
+    return false;
+  }
+}
+
+function backupWorkStateFile(backupDir, jsonText, now = new Date(), { appData } = {}) {
+  let dir;
+  try {
+    dir = path.resolve(String(backupDir || ''));
+  } catch (error) {
+    return { ok: false, error: 'backup_dir' };
+  }
+  if (appData && isOfficialPanelDataPath(dir, appData)) return { ok: false, error: 'official_data_dir' };
+  if (path.basename(dir) !== 'work-import-backups') return { ok: false, error: 'backup_dir' };
+  if (typeof jsonText !== 'string' || !jsonText.trim()) return { ok: false, error: 'empty' };
+  if (Buffer.byteLength(jsonText) > 4 * 1024 * 1024) return { ok: false, error: 'too_large' };
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    return { ok: false, error: 'json' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== 1 || !Array.isArray(parsed.tasks)) {
+    return { ok: false, error: 'schema' };
+  }
+  const date = now instanceof Date && Number.isFinite(now.getTime()) ? now : new Date();
+  const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const fileName = `notch-work-tasks-v1-${stamp}-${crypto.randomBytes(3).toString('hex')}.json`;
+  if (!writeAtomicFile(path.join(dir, fileName), jsonText)) return { ok: false, error: 'write' };
+  try {
+    const names = fs.readdirSync(dir)
+      .filter((name) => /^notch-work-tasks-v1-.*\.json$/.test(name) && !name.endsWith('.tmp'))
+      .map((name) => ({ name, mtime: fs.statSync(path.join(dir, name)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    names.slice(20).forEach((entry) => {
+      try { fs.unlinkSync(path.join(dir, entry.name)); } catch (error) {}
+    });
+  } catch (error) {}
+  return { ok: true, fileName };
+}
+
+const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.json', '.vtt', '.srt']);
+const AUDIO_EXTENSIONS = new Set([
+  '.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.mp4', '.mov', '.mkv', '.webm', '.caf', '.aiff', '.aif',
+]);
+const EXECUTABLE_EXTENSIONS = new Set([
+  '.exe', '.dll', '.so', '.dylib', '.app', '.command', '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', '.dmg', '.pkg', '.msi', '.apk',
+]);
+const CREDENTIAL_NAME = /(^|\/)(credentials|secrets|tokens?|id_rsa|id_ed25519)(\.|$)|(\.(pem|key|p12|pfx|kdbx)$)/i;
+
+function pathInside(root, candidate) {
+  const base = path.resolve(root);
+  const target = path.resolve(candidate);
+  return target === base || target.startsWith(base + path.sep);
+}
+
+function sensitiveReason(relativePath, mode = 0) {
+  const normalized = String(relativePath || '').replace(/\\/g, '/');
+  const base = path.posix.basename(normalized);
+  if (!base || base.startsWith('.')) return 'hidden_or_unsafe';
+  if (CREDENTIAL_NAME.test(normalized)) return 'credential';
+  const extension = path.posix.extname(base).toLowerCase();
+  if (EXECUTABLE_EXTENSIONS.has(extension)) return 'executable';
+  if ((mode & 0o111) !== 0 && !TEXT_EXTENSIONS.has(extension) && !AUDIO_EXTENSIONS.has(extension)) return 'executable';
+  return '';
+}
+
+function hashFileContents(filePath) {
+  const hash = crypto.createHash('sha256');
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest('hex');
+}
+
+function inspectWorkRoot(folder, {
+  appData,
+  home,
+  maxFiles = 500,
+  maxDepth = 8,
+  maxBytes = 2 * 1024 * 1024,
+  maxAudioBytes = 32 * 1024 * 1024,
+  knownAudioHashes = [],
+} = {}) {
+  let root;
+  try {
+    root = path.resolve(String(folder || ''));
+  } catch (error) {
+    return { ok: false, error: 'not_absolute' };
+  }
+  if (!path.isAbsolute(root)) return { ok: false, error: 'not_absolute' };
+  if (isBroadTranscriptFolder(root, { home, appData })) return { ok: false, error: 'folder_too_broad' };
+  if (appData && isOfficialPanelDataPath(root, appData)) return { ok: false, error: 'official_data_dir' };
+  let rootStat;
+  try {
+    rootStat = fs.lstatSync(root);
+  } catch (error) {
+    return { ok: false, error: 'unavailable' };
+  }
+  if (!rootStat.isDirectory() && !rootStat.isSymbolicLink()) return { ok: false, error: 'not_directory' };
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync(root);
+  } catch (error) {
+    return { ok: false, error: 'unavailable' };
+  }
+  if (isBroadTranscriptFolder(realRoot, { home, appData })) return { ok: false, error: 'folder_too_broad' };
+  let realRootStat;
+  try {
+    realRootStat = fs.statSync(realRoot);
+  } catch (error) {
+    return { ok: false, error: 'not_directory' };
+  }
+  if (!realRootStat.isDirectory()) return { ok: false, error: 'not_directory' };
+
+  const files = [];
+  const skipped = [];
+  const known = new Set((Array.isArray(knownAudioHashes) ? knownAudioHashes : []).filter((value) => /^[a-f0-9]{64}$/.test(value)));
+  const seenAudio = new Set(known);
+
+  function skip(relativePath, reason) {
+    if (skipped.length < 200) skipped.push({ name: String(relativePath || '').slice(0, 180), reason });
+  }
+
+  function addFile(relativePath, full, realFile, stat, viaSymlink) {
+    if (files.length >= maxFiles) {
+      skip(relativePath, 'limit');
+      return;
+    }
+    const sensitivity = sensitiveReason(relativePath, stat.mode);
+    if (sensitivity) {
+      skip(relativePath, sensitivity);
+      return;
+    }
+    if (!pathInside(realRoot, realFile)) {
+      skip(relativePath, 'escape');
+      return;
+    }
+    const extension = path.posix.extname(relativePath).toLowerCase();
+    const kind = AUDIO_EXTENSIONS.has(extension) ? 'audio' : TEXT_EXTENSIONS.has(extension) ? 'text' : '';
+    if (!kind) {
+      skip(relativePath, 'extension');
+      return;
+    }
+    const limit = kind === 'audio' ? maxAudioBytes : maxBytes;
+    if (stat.size > limit) {
+      skip(relativePath, 'too_large');
+      return;
+    }
+    let sha256;
+    try {
+      sha256 = hashFileContents(realFile);
+    } catch (error) {
+      skip(relativePath, 'unreadable');
+      return;
+    }
+    const duplicate = kind === 'audio' && seenAudio.has(sha256);
+    if (kind === 'audio') seenAudio.add(sha256);
+    files.push({
+      name: path.posix.basename(relativePath),
+      relativePath,
+      kind,
+      bytes: stat.size,
+      modifiedAt: new Date(stat.mtimeMs).toISOString(),
+      sha256,
+      viaSymlink: viaSymlink === true,
+      duplicate,
+      transcription: kind === 'audio'
+        ? { state: duplicate ? 'duplicate' : 'needs_local_transcriber', reason: duplicate ? 'audio_watermark' : 'not_transcribed' }
+        : null,
+    });
+  }
+
+  function walk(directory, relativeDir, depth) {
+    if (depth > maxDepth) {
+      skip(relativeDir || '.', 'max_depth');
+      return;
+    }
+    let entries;
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      skip(relativeDir || '.', 'unreadable');
+      return;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    entries.forEach((entry) => {
+      const name = entry.name;
+      const relativePath = relativeDir ? `${relativeDir}/${name}` : name;
+      if (!name || name !== path.basename(name) || name.startsWith('.')) {
+        skip(relativePath, 'hidden_or_unsafe');
+        return;
+      }
+      const full = path.resolve(directory, name);
+      let listed;
+      try {
+        listed = fs.lstatSync(full);
+      } catch (error) {
+        skip(relativePath, 'unreadable');
+        return;
+      }
+      if (listed.isSymbolicLink()) {
+        let realFile;
+        try {
+          realFile = fs.realpathSync(full);
+        } catch (error) {
+          skip(relativePath, 'escape');
+          return;
+        }
+        if (!pathInside(realRoot, realFile)) {
+          skip(relativePath, 'escape');
+          return;
+        }
+        let realStat;
+        try {
+          realStat = fs.statSync(realFile);
+        } catch (error) {
+          skip(relativePath, 'unreadable');
+          return;
+        }
+        if (realStat.isDirectory()) {
+          skip(relativePath, 'symlink_directory');
+          return;
+        }
+        addFile(relativePath, full, realFile, realStat, true);
+        return;
+      }
+      if (listed.isDirectory()) {
+        const sensitivity = sensitiveReason(relativePath, 0);
+        if (sensitivity) {
+          skip(relativePath, sensitivity);
+          return;
+        }
+        walk(full, relativePath, depth + 1);
+        return;
+      }
+      if (!listed.isFile()) {
+        skip(relativePath, 'not_regular_file');
+        return;
+      }
+      let realFile;
+      try {
+        realFile = fs.realpathSync(full);
+      } catch (error) {
+        skip(relativePath, 'unreadable');
+        return;
+      }
+      addFile(relativePath, full, realFile, listed, false);
+    });
+  }
+
+  walk(realRoot, '', 1);
+  files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return {
+    ok: true,
+    files,
+    skipped,
+    audioHashes: files.filter((file) => file.kind === 'audio').map((file) => file.sha256),
+  };
+}
+
+function listTranscriptFolder(folder, options) {
+  return inspectWorkRoot(folder, options);
+}
+
+function probeLocalTranscriber({ env = {}, lookup } = {}) {
+  const requested = typeof env.TODO_PANEL_LOCAL_TRANSCRIBE === 'string' ? env.TODO_PANEL_LOCAL_TRANSCRIBE.trim() : '';
+  if (requested && /(api\.openai|api\.anthropic|dashscope|bailian|aliyuncs|generativelanguage\.googleapis)/i.test(requested)) {
+    return { ok: false, reason: 'refusing_cloud_transcriber' };
+  }
+  if (typeof lookup === 'function') {
+    const found = lookup(requested ? [requested] : ['whisper-cli', 'whisper']);
+    if (!found) return { ok: false, reason: 'local_transcriber_missing' };
+    return { ok: true, reason: 'local_transcriber_ready', command: path.basename(String(found)) };
+  }
+  return { ok: false, reason: 'local_transcriber_missing' };
+}
+
+function safeMaterialName(relativePath) {
+  const cleaned = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!cleaned || cleaned.split('/').some((part) => !part || part === '.' || part === '..')) return '';
+  return `${cleaned.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 160)}.txt`;
+}
+
+function prepareWorkMaterials({
+  root,
+  outDir,
+  knownAudioHashes,
+  runner,
+  env,
+  lookup,
+  home,
+  appData,
+  maxBytes,
+  maxAudioBytes,
+} = {}) {
+  let output;
+  try {
+    output = path.resolve(String(outDir || ''));
+  } catch (error) {
+    return { ok: false, error: 'out_dir' };
+  }
+  if (path.basename(output) !== 'work-materials') return { ok: false, error: 'out_dir' };
+  const inspected = inspectWorkRoot(root, { knownAudioHashes, home, appData, maxBytes, maxAudioBytes });
+  if (!inspected.ok) return inspected;
+  let sourceRoot;
+  try {
+    sourceRoot = fs.realpathSync(path.resolve(root));
+  } catch (error) {
+    return { ok: false, error: 'unavailable' };
+  }
+  if (pathInside(sourceRoot, output) || pathInside(output, sourceRoot)) return { ok: false, error: 'out_overlaps_root' };
+  const transcriber = typeof runner === 'function'
+    ? { ok: true, reason: 'test_runner', command: 'test-runner' }
+    : probeLocalTranscriber({ env, lookup });
+  try {
+    fs.mkdirSync(path.join(output, 'text'), { recursive: true, mode: 0o700 });
+  } catch (error) {
+    return { ok: false, error: 'out_dir' };
+  }
+  const files = [];
+  inspected.files.forEach((file) => {
+    const record = {
+      relativePath: file.relativePath,
+      kind: file.kind,
+      sha256: file.sha256,
+      bytes: file.bytes,
+      duplicate: file.duplicate === true,
+    };
+    const materialName = safeMaterialName(file.relativePath);
+    const materialPath = materialName ? path.join(output, 'text', materialName) : '';
+    if (file.kind === 'text' && !file.duplicate && materialPath) {
+      const source = path.join(sourceRoot, ...file.relativePath.split('/'));
+      if (!pathInside(sourceRoot, source)) {
+        record.transcription = { state: 'unavailable', reason: 'escape' };
+      } else {
+        fs.writeFileSync(materialPath, fs.readFileSync(source));
+        record.textFile = `text/${materialName}`;
+      }
+    }
+    if (file.kind === 'audio') {
+      if (file.duplicate) {
+        record.transcription = { state: 'duplicate', reason: 'audio_watermark' };
+      } else if (!transcriber.ok || typeof runner !== 'function') {
+        record.transcription = { state: 'unavailable', reason: transcriber.ok ? 'local_transcriber_not_run' : transcriber.reason };
+      } else {
+        const source = path.join(sourceRoot, ...file.relativePath.split('/'));
+        const result = pathInside(sourceRoot, source)
+          ? runner({ input: source, output: materialPath, relativePath: file.relativePath })
+          : { ok: false, reason: 'escape' };
+        if (result && result.ok === true && materialPath && fs.existsSync(materialPath)) {
+          record.textFile = `text/${materialName}`;
+          record.transcription = { state: 'ready', reason: 'local_transcript' };
+        } else {
+          record.transcription = { state: 'unavailable', reason: (result && result.reason) || 'transcriber_failed' };
+        }
+      }
+    }
+    files.push(record);
+  });
+  const manifest = {
+    version: 1,
+    rootLabel: 'private-local-root',
+    timezone: 'Asia/Shanghai',
+    readyBy: '09:00',
+    leadMinutes: 60,
+    prepareAt: '08:00',
+    scheduleEnabled: false,
+    acceptedLocally: false,
+    transcriber: { ok: Boolean(transcriber.ok), reason: transcriber.reason },
+    files,
+    skipped: inspected.skipped,
+  };
+  const manifestText = JSON.stringify(manifest, null, 2);
+  if (manifestText.includes(sourceRoot)) return { ok: false, error: 'manifest_leaked_root' };
+  if (!writeAtomicFile(path.join(output, 'manifest.json'), manifestText)) return { ok: false, error: 'write' };
+  writeAtomicFile(path.join(output, 'audio-watermark.json'), JSON.stringify({
+    version: 1,
+    hashes: [...new Set(inspected.audioHashes)],
+  }, null, 2));
+  return { ok: true, manifest };
+}
+
 module.exports = {
   isPrivateAddress,
   decodeHtmlEntities,
@@ -689,4 +1109,12 @@ module.exports = {
   updateDefaultTabPreference,
   sodaShortcutSpec,
   controlSodaMusic,
+  isOfficialPanelDataPath,
+  isBroadTranscriptFolder,
+  writeAtomicFile,
+  backupWorkStateFile,
+  listTranscriptFolder,
+  inspectWorkRoot,
+  probeLocalTranscriber,
+  prepareWorkMaterials,
 };

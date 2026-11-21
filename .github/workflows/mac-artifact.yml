@@ -1,0 +1,74 @@
+name: macOS arm64 artifact
+
+# 只上传构建产物，不创建 Release，不发布安装包。
+# 流水线里只有仓库代码和合成 fixture，没有本机工作目录、真实录音或密钥。
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/work-grok-import-de92
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    name: Build Apple Silicon DMG artifact
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: node --test tests/*.test.js
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.9"
+      - name: Synthetic speech transcription smoke
+        env:
+          TODO_PANEL_PRIVATE_RUNTIME: ${{ runner.temp }}/local-transcribe
+          TODO_PANEL_WHISPER_MODEL: tiny
+          HF_HUB_DISABLE_TELEMETRY: "1"
+        run: node scripts/transcribe-smoke.js
+      - name: Build unsigned arm64 DMG
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npm run build
+      - name: Verify and checksum DMG
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          app="dist.noindex/mac-arm64/TO-DO Panel Work.app"
+          dmg="dist.noindex/TO-DO-Panel-Work-${version}-arm64.dmg"
+          codesign --verify --deep --strict "$app"
+          hdiutil verify "$dmg"
+          shasum -a 256 "$dmg" | tee "dist.noindex/TO-DO-Panel-Work-${version}-arm64.dmg.sha256"
+          echo "artifact=$(basename "$dmg")" >> "$GITHUB_STEP_SUMMARY"
+      - name: Pack local helper bundle
+        run: node scripts/pack-work-helper.js --zip helper-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-arm64-installer
+          path: |
+            dist.noindex/*.dmg
+            dist.noindex/*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-work-helper
+          path: |
+            helper-dist/*.zip
+            helper-dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
