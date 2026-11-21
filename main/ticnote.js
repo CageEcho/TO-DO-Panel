@@ -1,6 +1,6 @@
 // TicNote 只读接入。中国正式环境，精确 ID 授权，不上传、不发起转写、不跟随重定向。
 // 这个文件不读取钥匙串，也不发网络请求；调用方传入加密和 transport。
-const { cleanModel, runGrokExtraction, describePrepGap } = require('./grok-extract');
+const { cleanModel, normalizeBailianBase, runGrokExtraction, runAuthorizedPrep, describePrepGap } = require('./grok-extract');
 
 const CHINA_ORIGIN = 'https://voice-api.ticnote.cn';
 const CHINA_HOST = 'voice-api.ticnote.cn';
@@ -650,6 +650,7 @@ function createGrokConfig({ encrypt, decrypt, load, save, log = () => {} } = {})
       enabled: state.enabled === true,
       apiKey: key(),
       model: state.model,
+      provider: 'xai',
       pull,
       transport: options.transport,
       state: options.state,
@@ -658,6 +659,117 @@ function createGrokConfig({ encrypt, decrypt, load, save, log = () => {} } = {})
     });
   }
   return { status, saveKey, saveModel, setEnabled, clearKey, extract, extractFromPull };
+}
+
+function publicBailianStatus({ configured = false, enabled = false, model = '', baseUrl = '' } = {}) {
+  const usable = configured === true && Boolean(cleanModel(model)) && normalizeBailianBase(baseUrl).ok === true;
+  const callsEnabled = usable && enabled === true;
+  return {
+    configured: configured === true,
+    enabled: callsEnabled,
+    model: cleanModel(model),
+    baseUrl: normalizeBailianBase(baseUrl).ok ? normalizeBailianBase(baseUrl).baseUrl : '',
+    provider: 'bailian',
+    callsEnabled,
+    reason: callsEnabled ? 'ready' : (!configured ? 'no_key' : !normalizeBailianBase(baseUrl).ok ? 'no_base_url' : !cleanModel(model) ? 'no_model' : 'not_enabled'),
+    billing: '启用后，获准转写文本会按你填写的 Base URL 发到阿里云百炼兼容接口，按该账号的 token 用量计费。模型 ID 需要你自己填写。',
+  };
+}
+
+function createBailianConfig({ encrypt, decrypt, load, save, log = () => {} } = {}) {
+  function read() {
+    const stored = typeof load === 'function' ? load() : null;
+    const source = stored && typeof stored === 'object' ? stored : {};
+    const base = normalizeBailianBase(source.baseUrl);
+    return {
+      encryptedApiKey: typeof source.encryptedApiKey === 'string' ? source.encryptedApiKey : '',
+      model: cleanModel(source.model),
+      baseUrl: base.ok ? base.baseUrl : '',
+      enabled: source.enabled === true,
+    };
+  }
+  function key() {
+    const state = read();
+    if (!state.encryptedApiKey || typeof decrypt !== 'function') return '';
+    const value = String(decrypt(state.encryptedApiKey) || '').trim();
+    if (!value || value === state.encryptedApiKey) return '';
+    return value;
+  }
+  function persist(next) {
+    if (typeof save !== 'function') return;
+    const base = normalizeBailianBase(next.baseUrl);
+    save({
+      version: 1,
+      encryptedApiKey: next.encryptedApiKey || '',
+      model: cleanModel(next.model),
+      baseUrl: base.ok ? base.baseUrl : '',
+      enabled: next.enabled === true && Boolean(next.encryptedApiKey) && Boolean(cleanModel(next.model)) && base.ok,
+    });
+  }
+  function status() {
+    const state = read();
+    return publicBailianStatus({
+      configured: Boolean(key()),
+      enabled: state.enabled,
+      model: state.model,
+      baseUrl: state.baseUrl,
+    });
+  }
+  function saveKey(apiKey) {
+    const value = typeof apiKey === 'string' ? apiKey.trim() : '';
+    if (!value || value.length < 8 || value.length > 300 || /[\r\n]/.test(value)) {
+      return { ok: false, reason: 'malformed', status: status() };
+    }
+    if (typeof encrypt !== 'function') return { ok: false, reason: 'secure_storage_unavailable', status: status() };
+    const encrypted = encrypt(value);
+    if (!encrypted || encrypted === value) return { ok: false, reason: 'secure_storage_unavailable', status: status() };
+    const state = read();
+    persist({ ...state, encryptedApiKey: encrypted, enabled: false });
+    log('已加密保存阿里云百炼 API Key，提取仍关闭');
+    return { ok: true, status: status() };
+  }
+  function saveModel(model) {
+    const clean = cleanModel(model);
+    if (!clean) return { ok: false, reason: 'no_model', status: status() };
+    const state = read();
+    persist({ ...state, model: clean, enabled: false });
+    return { ok: true, status: status() };
+  }
+  function saveBaseUrl(baseUrl) {
+    const base = normalizeBailianBase(baseUrl);
+    if (!base.ok) return { ok: false, reason: base.reason, status: status() };
+    const state = read();
+    persist({ ...state, baseUrl: base.baseUrl, enabled: false });
+    return { ok: true, status: status() };
+  }
+  function setEnabled(enabled) {
+    const state = read();
+    if (!key()) return { ok: false, reason: 'no_key', status: status() };
+    if (!state.baseUrl) return { ok: false, reason: 'no_base_url', status: status() };
+    if (!state.model) return { ok: false, reason: 'no_model', status: status() };
+    persist({ ...state, enabled: enabled === true });
+    return { ok: true, status: status() };
+  }
+  function clearKey() {
+    persist({ encryptedApiKey: '', model: '', baseUrl: '', enabled: false });
+    return { ok: true, status: status() };
+  }
+  function extractFromPull(pull, options = {}) {
+    const state = read();
+    return runAuthorizedPrep({
+      enabled: state.enabled === true,
+      apiKey: key(),
+      model: state.model,
+      provider: 'bailian',
+      baseUrl: state.baseUrl,
+      pull,
+      transport: options.transport,
+      state: options.state,
+      now: options.now,
+      log,
+    });
+  }
+  return { status, saveKey, saveModel, saveBaseUrl, setEnabled, clearKey, extractFromPull };
 }
 
 function planUnattendedPrep({ schedule = {}, ticnote = {}, grok = {} } = {}) {
@@ -706,5 +818,6 @@ module.exports = {
   buildRequest,
   createTicnoteSession,
   createGrokConfig,
+  createBailianConfig,
   planUnattendedPrep,
 };

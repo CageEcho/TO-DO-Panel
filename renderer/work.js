@@ -698,6 +698,7 @@
     const refresh = async () => {
       const tic = await window.notchAPI?.ticnoteStatus?.();
       const grok = await window.notchAPI?.grokStatus?.();
+      const bailian = await window.notchAPI?.bailianStatus?.();
       const label = document.getElementById('ticnote-status-label');
       const connection = document.getElementById('ticnote-connection');
       const grokStatus = document.getElementById('grok-call-status');
@@ -727,6 +728,30 @@
         }
         if (grokEnabled && document.activeElement !== grokEnabled) grokEnabled.checked = grok.status.enabled === true;
         if (grokLabel) grokLabel.textContent = grok.status.enabled ? '已启用' : '默认关闭';
+      }
+      const bailianEnabled = document.getElementById('bailian-enabled');
+      const bailianLabel = document.getElementById('bailian-enabled-label');
+      const bailianStatus = document.getElementById('bailian-call-status');
+      const bailianModel = document.getElementById('bailian-model-label');
+      const bailianBase = document.getElementById('bailian-base-label');
+      if (bailian?.status) {
+        if (bailianBase) {
+          bailianBase.textContent = bailian.status.baseUrl
+            ? `已保存 ${bailian.status.baseUrl}`
+            : '未保存。占位不是唯一地址';
+        }
+        if (bailianModel) {
+          bailianModel.textContent = bailian.status.model
+            ? `当前填写的模型是 ${bailian.status.model}`
+            : '未填写，不假定某个模型可用';
+        }
+        if (bailianStatus) {
+          bailianStatus.textContent = bailian.status.enabled
+            ? '已启用。整理时会把获准转写发到你保存的百炼地址，并按 token 计费。每日自动仍关闭。'
+            : '未启用，不会访问百炼';
+        }
+        if (bailianEnabled && document.activeElement !== bailianEnabled) bailianEnabled.checked = bailian.status.enabled === true;
+        if (bailianLabel) bailianLabel.textContent = bailian.status.enabled ? '已启用' : '默认关闭';
       }
     };
     document.getElementById('ticnote-save')?.addEventListener('click', async () => {
@@ -810,6 +835,70 @@
     document.getElementById('grok-clear')?.addEventListener('click', async () => {
       await window.notchAPI?.grokClearKey?.();
       if (grokInput) grokInput.value = '';
+      refresh();
+    });
+    const bailianKey = document.getElementById('bailian-api-key');
+    document.getElementById('bailian-save')?.addEventListener('click', async () => {
+      const baseValue = document.getElementById('bailian-base-url')?.value || '';
+      if (baseValue) {
+        const savedBase = await window.notchAPI?.bailianSaveBase?.(baseValue);
+        if (!savedBase?.ok) setNote('Base URL 需要是百炼官方 HTTPS 兼容地址，例如国内占位、业务空间域名或国际站。');
+      }
+      if (bailianKey?.value) {
+        const saved = await window.notchAPI?.bailianSaveKey?.(bailianKey.value);
+        bailianKey.value = '';
+        if (!saved?.ok) setNote(saved?.reason === 'secure_storage_unavailable' ? '这台系统不能加密保存密钥，没有写入。' : '百炼密钥没有保存。');
+      }
+      const modelValue = document.getElementById('bailian-model')?.value || '';
+      if (modelValue) {
+        const savedModel = await window.notchAPI?.bailianSaveModel?.(modelValue);
+        if (!savedModel?.ok) setNote('模型 ID 只能是字母、数字、点、下划线、冒号或连字符。');
+      }
+      refresh();
+    });
+    document.getElementById('bailian-enabled')?.addEventListener('change', async (event) => {
+      const saved = await window.notchAPI?.bailianSetEnabled?.(event.currentTarget.checked === true);
+      if (!saved?.ok) {
+        event.currentTarget.checked = false;
+        const note = {
+          no_key: '先保存百炼 API Key。没有密钥时不会出网。',
+          no_base_url: '先保存 Base URL。',
+          no_model: '先填写模型 ID。这里不假定某个模型可用。',
+        };
+        setNote(note[saved?.reason] || '百炼提取没有启用。');
+      } else if (event.currentTarget.checked) {
+        setNote('已启用百炼提取。获准转写会发到你保存的地址，按 token 计费。每日自动整理仍关闭。');
+      }
+      refresh();
+    });
+    document.getElementById('bailian-extract')?.addEventListener('click', async () => {
+      const result = await window.notchAPI?.bailianExtract?.();
+      if (!result?.ok) {
+        const reasons = {
+          not_enabled: '百炼还没有启用，不会出网。',
+          no_key: '没有百炼密钥，不会出网。',
+          no_model: '没有百炼模型 ID，不会出网。',
+          no_base_url: '没有 Base URL，不会出网。',
+          host_refused: '这个地址不在百炼官方兼容主机里，没有发送。',
+          no_transcript: '授权文件夹里没有可发送的转写，没有向百炼发请求。',
+          bad_output: '模型输出不能核对到来源摘录，没有写入待办。',
+          timeout: '百炼超时，没有写入待办，也不会把材料标成已处理。',
+          rate_limited: '百炼限流，没有写入待办，也不会把材料标成已处理。',
+          redirect_refused: '百炼返回了重定向，已停止，没有改发到别的地址。',
+        };
+        setNote(reasons[result?.reason] || '这次没有写入待办。');
+      } else {
+        setNote(result.imported ? `已放入收件箱 ${result.imported} 条。每日自动仍关闭。` : '没有新的待办。每日自动仍关闭。');
+      }
+      refresh();
+    });
+    document.getElementById('bailian-clear')?.addEventListener('click', async () => {
+      await window.notchAPI?.bailianClear?.();
+      if (bailianKey) bailianKey.value = '';
+      const base = document.getElementById('bailian-base-url');
+      if (base) base.value = '';
+      const model = document.getElementById('bailian-model');
+      if (model) model.value = '';
       refresh();
     });
     refresh();

@@ -201,7 +201,7 @@ TicNote 是新增的云端只读来源，不替代、也不扩大已经授权的
 
 ### Grok API
 
-整理待办和读取 TicNote 是两件事。应用可以保存一把 xAI API Key，并让你填写模型 ID，不预选一个未确认是否可用的模型。启用之后，已指定 TicNote 文件夹里的转写会作为数据发到 `POST https://api.x.ai/v1/chat/completions`，按该账户的 token 用量计费。转写里的句子不会被当成指令。返回的任务必须能对上原文摘录、来源、责任和日期，否则整次不入库，也不会把材料标成已读。缺密钥、缺模型或没有勾选启用时不会出网。这把密钥不是当前聊天订阅。每日 09:00 前的自动运行仍要等本机验收，现在保持关闭；应用睡眠或离线时不能补到当时，只会在下次打开后标成待补做。
+整理待办和读取 TicNote 是两件事。应用可以保存一把 xAI API Key，并让你填写模型 ID，不预选一个未确认是否可用的模型。启用之后，已指定 TicNote 文件夹里的转写会作为数据发到 `POST https://api.x.ai/v1/chat/completions`，按该账户的 token 用量计费。也可以另存一套阿里云百炼配置：Base URL、API Key 和模型 ID。占位地址是 `https://dashscope.aliyuncs.com/compatible-mode/v1`，也可以改成业务空间域名或 `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`。请求会发到该地址下的 `/chat/completions`，头为 `Authorization: Bearer`。只接受百炼官方 HTTPS 主机，遇到重定向会停止。转写里的句子不会被当成指令。返回的任务必须能对上原文摘录、来源、责任和日期，否则整次不入库，也不会把材料标成已读。缺 Base URL、密钥、模型或没有勾选启用时不会出网。这两把密钥都不是当前聊天订阅。每日 09:00 前的自动运行仍要等本机验收，现在保持关闭；应用睡眠或离线时不能补到当时，只会在下次打开后标成待补做。
 
 ### 协调端读写契约
 

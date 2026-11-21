@@ -29,6 +29,9 @@ test('todo page keeps the classic matrix and adds a separate work view', () => {
   assert.match(html, /id="work-board"/);
   assert.match(html, /id="settings-ticnote-card"/);
   assert.match(html, /id="settings-grok-card"/);
+  assert.match(html, /id="settings-bailian-card"/);
+  assert.match(html, /placeholder="https:\/\/dashscope\.aliyuncs\.com\/compatible-mode\/v1"/);
+  assert.match(html, /https:\/\/api\.x\.ai\/v1\/chat\/completions/);
   assert.equal(html.includes('周一15:00'), false);
   assert.match(html, /id="work-source-enabled"/);
   assert.match(html, /src="work-domain\.js"/);

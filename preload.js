@@ -81,6 +81,13 @@ contextBridge.exposeInMainWorld('notchAPI', {
   grokSetEnabled: (enabled) => ipcRenderer.invoke('grok:set-enabled', enabled),
   grokExtract: () => ipcRenderer.invoke('grok:extract'),
   grokClearKey: () => ipcRenderer.invoke('grok:clear-key'),
+  bailianStatus: () => ipcRenderer.invoke('bailian:status'),
+  bailianSaveKey: (apiKey) => ipcRenderer.invoke('bailian:save-key', apiKey),
+  bailianSaveBase: (baseUrl) => ipcRenderer.invoke('bailian:save-base', baseUrl),
+  bailianSaveModel: (model) => ipcRenderer.invoke('bailian:save-model', model),
+  bailianSetEnabled: (enabled) => ipcRenderer.invoke('bailian:set-enabled', enabled),
+  bailianExtract: () => ipcRenderer.invoke('bailian:extract'),
+  bailianClear: () => ipcRenderer.invoke('bailian:clear'),
   onCollapseRequest: (cb) => subscribe('window:request-collapse', () => cb()),
   getMetrics: () => ipcRenderer.invoke('window:metrics'),
   onMetricsChanged: (cb) =>

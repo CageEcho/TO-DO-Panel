@@ -471,7 +471,40 @@
                       <button id="grok-clear" type="button">清除</button>
                     </span>
                   </div>
-                  <p class="settings-inline-note">请求只发到 https://api.x.ai/v1/chat/completions。启用后，已授权文件夹里的转写文本会送去 xAI，按该账户的 token 用量计费。这不是当前聊天订阅，也不是 TicNote 的密钥。缺密钥、缺模型或没有勾选启用时不会出网。每日 09:00 前的自动整理仍要等本机验收后另开，现在保持关闭。应用睡眠或离线时不能保证当时写完，下次打开会标成待补做。</p>
+                  <p class="settings-inline-note">请求只发到 https://api.x.ai/v1/chat/completions。启用后，已授权文件夹里的转写文本会送去 xAI，按该账户的 token 用量计费。这不是当前聊天订阅，也不是 TicNote 或百炼的密钥。缺密钥、缺模型或没有勾选启用时不会出网。每日 09:00 前的自动整理仍要等本机验收后另开，现在保持关闭。</p>
+                </section>
+
+                <section class="tile settings-card" id="settings-bailian-card">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">阿里云百炼</span><strong>可选提取接口</strong></div>
+                    <small id="bailian-enabled-label">默认关闭</small>
+                  </div>
+                  <label class="settings-device-row">
+                    <div><span>Base URL</span><strong id="bailian-base-label">未保存。占位不是唯一地址</strong></div>
+                    <input id="bailian-base-url" type="url" maxlength="240" autocomplete="off" spellcheck="false" aria-label="百炼 Base URL" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>API Key</span><strong>只保存在本机加密存储</strong></div>
+                    <input id="bailian-api-key" type="password" maxlength="300" autocomplete="off" spellcheck="false" aria-label="百炼 API Key" placeholder="留空则不保存" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>模型 ID</span><strong id="bailian-model-label">未填写，不假定某个模型可用</strong></div>
+                    <input id="bailian-model" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-label="百炼模型 ID" placeholder="从百炼控制台复制模型 ID" />
+                  </label>
+                  <label class="settings-device-row">
+                    <div><span>启用提取</span><strong id="bailian-call-status">未启用，不会访问百炼</strong></div>
+                    <input id="bailian-enabled" type="checkbox" aria-label="启用后把获准转写发送到百炼兼容接口" />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <div class="settings-device-row">
+                    <div><span>手动整理</span><strong>与 xAI 分开，只处理已指定的 TicNote 文件夹</strong></div>
+                    <span class="settings-device-actions">
+                      <button id="bailian-save" type="button">保存</button>
+                      <button id="bailian-extract" type="button">用百炼整理一次</button>
+                      <button id="bailian-clear" type="button">清除</button>
+                    </span>
+                  </div>
+                  <p class="settings-inline-note">按阿里云百炼 OpenAI 兼容模式调用：在你填写的 Base URL 后追加 /chat/completions，请求头为 Authorization: Bearer。输入框占位是 https://dashscope.aliyuncs.com/compatible-mode/v1，也可以改成业务空间域名 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1，或国际站 https://dashscope-intl.aliyuncs.com/compatible-mode/v1。只接受这些官方 HTTPS 主机上的 compatible-mode/v1，遇到重定向会停止。缺 Base URL、密钥、模型或没有勾选启用时不会出网。这不是当前聊天订阅，也不是上面的 xAI 密钥。启用后按百炼账号的 token 用量计费。每日自动整理仍然关闭。</p>
                 </section>
 
                 <section class="tile settings-card settings-home-modules-card">

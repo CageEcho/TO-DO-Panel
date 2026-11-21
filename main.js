@@ -64,8 +64,8 @@ const {
   createForegroundMediaPermissionCoordinator,
 } = require('./main-services');
 const { publicWorkSchedule } = require('./renderer/work-domain');
-const { createTicnoteSession, createGrokConfig, CHINA_ORIGIN } = require('./main/ticnote');
-const { runAuthorizedPrep } = require('./main/grok-extract');
+const { createTicnoteSession, createGrokConfig, createBailianConfig, CHINA_ORIGIN } = require('./main/ticnote');
+const { normalizeBailianBase } = require('./main/grok-extract');
 const { planInboxWrite } = require('./scripts/grok-work-import');
 const { createAgentUsageMonitor } = require('./main/agent-usage');
 const { createNotchGeometry } = require('./main/notch-geometry');
@@ -2085,6 +2085,21 @@ function ticnoteService() {
   return ticnoteApi;
 }
 
+function bailianService() {
+  if (!bailianApi) {
+    bailianApi = createBailianConfig({
+      load: () => readPrivateJson('bailian-connection.json'),
+      save: (value) => writePrivateJson('bailian-connection.json', value),
+      encrypt: (value) => (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value).toString('base64') : ''),
+      decrypt: (value) => decryptStoredSecret(value),
+      log: (line) => console.log(String(line).slice(0, 240)),
+    });
+  }
+  return bailianApi;
+}
+
+let bailianApi = null;
+
 function grokService() {
   if (!grokApi) {
     grokApi = createGrokConfig({
@@ -2167,25 +2182,7 @@ ipcMain.handle('grok:extract', async (event) => {
     (options) => ticnoteService().pullTranscripts(options),
     { transport: xaiTransport },
   );
-  if (!prep.ok || !prep.payload) return { ok: false, reason: prep.reason || 'extract_failed', network: prep.network === true };
-  ensureTodoInboxDir();
-  const plan = planInboxWrite({
-    inboxDir: workspacePath('todo-inbox'),
-    payload: prep.payload,
-    appData: OFFICIAL_APP_DATA,
-    now: new Date(),
-  });
-  if (!plan.ok) return { ok: false, reason: 'inbox_rejected', network: true };
-  const written = writeAtomicFile(path.join(plan.inbox, plan.fileName), JSON.stringify(prep.payload));
-  if (!written) return { ok: false, reason: 'inbox_write_failed', network: true };
-  ticnoteService().commitWatermark(prep.watermarkPatch || {});
-  return {
-    ok: true,
-    network: true,
-    imported: plan.preview.imported,
-    skipped: plan.preview.skipped,
-    scheduleEnabled: false,
-  };
+  return finishModelExtract(prep);
 });
 
 function xaiTransport(request) {
@@ -2221,6 +2218,96 @@ function xaiTransport(request) {
     req.end();
   });
 }
+
+function bailianTransport(request) {
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL(request.url); } catch (error) { resolve({ status: 0, body: '' }); return; }
+    const base = normalizeBailianBase(url.origin + url.pathname.replace(/\/chat\/completions$/, ''));
+    if (!base.ok || url.toString() !== base.chatUrl || url.search) {
+      resolve({ status: 0, body: '' });
+      return;
+    }
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'POST',
+      headers: request.headers,
+      timeout: 30000,
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 200000) chunks.push(chunk);
+      });
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: { location: res.headers.location || '' },
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, error: 'timeout', body: '' }); });
+    if (request.body) req.write(request.body);
+    req.end();
+  });
+}
+
+async function finishModelExtract(prep) {
+  if (!prep.ok || !prep.payload) return { ok: false, reason: prep.reason || 'extract_failed', network: prep.network === true };
+  ensureTodoInboxDir();
+  const plan = planInboxWrite({
+    inboxDir: workspacePath('todo-inbox'),
+    payload: prep.payload,
+    appData: OFFICIAL_APP_DATA,
+    now: new Date(),
+  });
+  if (!plan.ok) return { ok: false, reason: 'inbox_rejected', network: true };
+  const written = writeAtomicFile(path.join(plan.inbox, plan.fileName), JSON.stringify(prep.payload));
+  if (!written) return { ok: false, reason: 'inbox_write_failed', network: true };
+  ticnoteService().commitWatermark(prep.watermarkPatch || {});
+  return {
+    ok: true,
+    network: true,
+    imported: plan.preview.imported,
+    skipped: plan.preview.skipped,
+    scheduleEnabled: false,
+  };
+}
+
+ipcMain.handle('bailian:status', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return { ok: true, status: bailianService().status() };
+});
+ipcMain.handle('bailian:save-key', (event, apiKey) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().saveKey(typeof apiKey === 'string' ? apiKey : '');
+});
+ipcMain.handle('bailian:save-base', (event, baseUrl) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().saveBaseUrl(typeof baseUrl === 'string' ? baseUrl : '');
+});
+ipcMain.handle('bailian:save-model', (event, model) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().saveModel(model);
+});
+ipcMain.handle('bailian:set-enabled', (event, enabled) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().setEnabled(enabled === true);
+});
+ipcMain.handle('bailian:clear', (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  return bailianService().clearKey();
+});
+ipcMain.handle('bailian:extract', async (event) => {
+  if (!isMainWindowSender(event)) return { ok: false, error: 'sender' };
+  const prep = await bailianService().extractFromPull(
+    (options) => ticnoteService().pullTranscripts(options),
+    { transport: bailianTransport },
+  );
+  return finishModelExtract(prep);
+});
 
 function getLayoutMetrics(display) {
   const d = display || getWindowDisplay();

@@ -3220,6 +3220,7 @@ body {
 .settings-workspace-path { max-width: 290px; }
 .settings-device-actions { flex: 0 0 auto; display: flex; gap: 6px; }
 .settings-auto-launch-row { position: relative; cursor: pointer; border-bottom: 0; }
+#bailian-base-url { width: min(520px, 62%); }
 .settings-inline-note { min-height: 14px; margin-top: auto !important; padding-top: 6px; color: #65d9a1 !important; }
 .settings-inline-note.error { color: #ff746d !important; }
 

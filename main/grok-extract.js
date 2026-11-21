@@ -7,6 +7,7 @@ const { mergeWorkImport, createEmptyWorkState } = require('../renderer/work-doma
 
 const XAI_ORIGIN = 'https://api.x.ai';
 const XAI_URL = 'https://api.x.ai/v1/chat/completions';
+const BAILIAN_PLACEHOLDER_BASE = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 const MAX_MATERIALS = 20;
 const MAX_MATERIAL_CHARS = 8000;
 const MAX_RESPONSE_CHARS = 200000;
@@ -42,6 +43,32 @@ function prepareMaterials(materials) {
   return prepared;
 }
 
+function bailianHostAllowed(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  if (host === 'dashscope.aliyuncs.com' || host === 'dashscope-intl.aliyuncs.com') return true;
+  return /^[a-z0-9][a-z0-9-]{0,62}(?:\.[a-z0-9][a-z0-9-]{0,62})+\.maas\.aliyuncs\.com$/.test(host);
+}
+
+function normalizeBailianBase(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return { ok: false, reason: 'no_base_url' };
+  let url;
+  try {
+    url = new URL(text);
+  } catch (error) {
+    return { ok: false, reason: 'bad_base_url' };
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    return { ok: false, reason: 'base_url_refused' };
+  }
+  if (!bailianHostAllowed(url.hostname)) return { ok: false, reason: 'host_refused' };
+  let path = url.pathname.replace(/\/+$/, '');
+  if (path.endsWith('/chat/completions')) path = path.slice(0, -'/chat/completions'.length).replace(/\/+$/, '');
+  if (path !== '/compatible-mode/v1') return { ok: false, reason: 'path_refused' };
+  const baseUrl = `https://${url.hostname}/compatible-mode/v1`;
+  return { ok: true, baseUrl, chatUrl: `${baseUrl}/chat/completions` };
+}
+
 function assertXaiRequest(request) {
   let url;
   try {
@@ -57,12 +84,12 @@ function assertXaiRequest(request) {
   return { ok: true };
 }
 
-function buildGrokRequest({ apiKey, model, materials }) {
+function buildChatRequest({ url, apiKey, model, materials }) {
   const checkedModel = cleanModel(model);
   const prepared = prepareMaterials(materials);
-  if (!apiKey || !checkedModel || !prepared.length) return { ok: false, reason: 'incomplete', network: false };
+  if (!apiKey || !checkedModel || !prepared.length || !url) return { ok: false, reason: 'incomplete', network: false };
   const request = {
-    url: XAI_URL,
+    url,
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -94,9 +121,21 @@ function buildGrokRequest({ apiKey, model, materials }) {
       ],
     }),
   };
-  const checked = assertXaiRequest(request);
-  if (!checked.ok) return { ok: false, reason: checked.reason, network: false };
   return { ok: true, request, materials: prepared };
+}
+
+function buildGrokRequest(options) {
+  const built = buildChatRequest({ ...options, url: XAI_URL });
+  if (!built.ok) return built;
+  const checked = assertXaiRequest(built.request);
+  if (!checked.ok) return { ok: false, reason: checked.reason, network: false };
+  return built;
+}
+
+function buildBailianRequest({ apiKey, model, materials, baseUrl }) {
+  const base = normalizeBailianBase(baseUrl);
+  if (!base.ok) return { ok: false, reason: base.reason, network: false };
+  return buildChatRequest({ url: base.chatUrl, apiKey, model, materials });
 }
 
 function extractJsonObject(content) {
@@ -168,6 +207,8 @@ async function runGrokExtraction({
   apiKey = '',
   model = '',
   enabled = false,
+  provider = 'xai',
+  baseUrl = '',
   materials = [],
   state = null,
   transport = null,
@@ -179,10 +220,14 @@ async function runGrokExtraction({
   if (!apiKey) return { ok: false, reason: 'no_key', network: false, changed: false, state: state || createEmptyWorkState() };
   if (!cleanModel(model)) return { ok: false, reason: 'no_model', network: false, changed: false, state: state || createEmptyWorkState() };
   if (!prepared.length) return { ok: false, reason: 'no_source', network: false, changed: false, state: state || createEmptyWorkState() };
-  const built = buildGrokRequest({ apiKey, model, materials: prepared });
+  const built = provider === 'bailian'
+    ? buildBailianRequest({ apiKey, model, materials: prepared, baseUrl })
+    : provider === 'xai'
+      ? buildGrokRequest({ apiKey, model, materials: prepared })
+      : { ok: false, reason: 'provider_refused', network: false };
   if (!built.ok) return { ok: false, reason: built.reason, network: false, changed: false, state: state || createEmptyWorkState() };
   if (typeof transport !== 'function') return { ok: false, reason: 'no_transport', network: false, changed: false, state: state || createEmptyWorkState() };
-  log('向 api.x.ai 发送已授权转写摘录');
+  log(provider === 'bailian' ? '向阿里云百炼兼容接口发送已授权转写摘录' : '向 api.x.ai 发送已授权转写摘录');
   const response = await transport(built.request);
   const status = responseStatus(response);
   if (!status.ok) return { ok: false, reason: status.reason, network: status.network, changed: false, state: state || createEmptyWorkState() };
@@ -229,6 +274,8 @@ async function runAuthorizedPrep({
   enabled = false,
   apiKey = '',
   model = '',
+  provider = 'xai',
+  baseUrl = '',
   pull = null,
   transport = null,
   state = null,
@@ -238,6 +285,9 @@ async function runAuthorizedPrep({
   if (!enabled) return { ok: false, reason: 'not_enabled', network: false, committed: false };
   if (!apiKey) return { ok: false, reason: 'no_key', network: false, committed: false };
   if (!cleanModel(model)) return { ok: false, reason: 'no_model', network: false, committed: false };
+  if (provider === 'bailian' && !normalizeBailianBase(baseUrl).ok) {
+    return { ok: false, reason: normalizeBailianBase(baseUrl).reason, network: false, committed: false };
+  }
   if (typeof pull !== 'function') return { ok: false, reason: 'no_source', network: false, committed: false };
   const pulled = await pull({ commitWatermark: false });
   if (!pulled || pulled.ok === false) {
@@ -259,7 +309,7 @@ async function runAuthorizedPrep({
     return { ok: false, reason: 'no_transcript', network: Boolean(pulled.network), committed: false, changed: false };
   }
   const extracted = await runGrokExtraction({
-    apiKey, model, enabled: true, materials, state, transport, now, log,
+    apiKey, model, enabled: true, provider, baseUrl, materials, state, transport, now, log,
   });
   if (!extracted.ok) return { ...extracted, committed: false, watermarkPatch: {} };
   const patch = {};
@@ -286,7 +336,10 @@ function describePrepGap(schedule = {}) {
 module.exports = {
   XAI_URL,
   XAI_ORIGIN,
+  BAILIAN_PLACEHOLDER_BASE,
   cleanModel,
+  normalizeBailianBase,
+  buildBailianRequest,
   prepareMaterials,
   assertXaiRequest,
   buildGrokRequest,
